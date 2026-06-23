@@ -1,0 +1,8 @@
+{
+  "name": "元啟實業記帳與單據辨識系統",
+  "description": "專為元啟實業有限公司設計之自動化電子發票與憑證辨識、智慧費用分類、試算表管理及會計自動記帳系統。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
