@@ -1,20 +1,33 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 元啟實業有限公司 - 記帳與單據辨識系統
 
-# Run and deploy your AI Studio app
+本系統專為元啟實業有限公司設計，提供自動化電子發票與憑證辨識、智慧費用分類、會計自動記帳及試算表管理。
 
-This contains everything you need to run your app locally.
+## 本機執行步驟
 
-View your app in AI Studio: https://ai.studio/apps/87015fcd-3b58-4b2a-8b98-7b57a6f5c086
+### 前置需求
+- Node.js (建議 v18 以上版本)
 
-## Run Locally
+### 執行步驟
 
-**Prerequisites:**  Node.js
+1. **安裝依賴套件**：
+   ```bash
+   npm install
+   ```
 
+2. **設定環境變數**：
+   將 `.env.example` 複製並命名為 `.env`：
+   ```bash
+   cp .env.example .env
+   ```
+   並於 `.env` 中設定您的 `GEMINI_API_KEY`：
+   ```env
+   GEMINI_API_KEY="您的_GEMINI_API_金鑰"
+   ```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+3. **啟動開發伺服器**：
+   ```bash
+   npm run dev
+   ```
+
+4. **瀏覽應用程式**：
+   開啟瀏覽器並造訪 `http://localhost:3000`。

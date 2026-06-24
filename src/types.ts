@@ -29,6 +29,7 @@ export interface AccountingRecord {
   notes: string;
   createdAt?: string;
   imageUrl?: string;
+  recorded_by: string;
   // 新增欄位
   billing_type: BillingType;
   status: ApprovalStatus;
@@ -49,6 +50,7 @@ export interface ParseResult {
   amount_total: number;
   currency: string;
   notes: string;
+  recorded_by?: string;
   // 新增欄位
   billing_type: BillingType;
   status: ApprovalStatus;

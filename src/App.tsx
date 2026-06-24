@@ -60,9 +60,10 @@ export default function App() {
   // Standard Form State
   const [formDate, setFormDate] = useState<string>('');
   const [formInvoiceNumber, setFormInvoiceNumber] = useState<string>('');
+  const [formRecordedBy, setFormRecordedBy] = useState<string>('');
   const [formSellerName, setFormSellerName] = useState<string>('');
   const [formSellerTaxId, setFormSellerTaxId] = useState<string>('');
-  const [formBuyerTaxId, setFormBuyerTaxId] = useState<string>('60327997');
+  const [formBuyerTaxId, setFormBuyerTaxId] = useState<string>('');
   const [formSummary, setFormSummary] = useState<string>('');
   const [formCategory, setFormCategory] = useState<ExpenseCategory>('辦公用品');
   const [formAmountSales, setFormAmountSales] = useState<number>(0);
@@ -84,12 +85,69 @@ export default function App() {
   // Image Ref for Drag-n-Drop hover styling
   const [dragActive, setDragActive] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // New approval view states
   const [activeView, setActiveView] = useState<'records' | 'approval'>('records');
   const [currentApproverName, setCurrentApproverName] = useState<string>('主管張元啟');
   const [selectedApprovalRecordId, setSelectedApprovalRecordId] = useState<string | null>(null);
   const [commentText, setCommentText] = useState<string>('');
+
+  // Authorization states
+  const [isAuthorized, setIsAuthorized] = useState<boolean>(() => {
+    return sessionStorage.getItem('app_authorized') === 'true';
+  });
+  const [loginPasswordInput, setLoginPasswordInput] = useState<string>('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState<boolean>(false);
+
+  // Handle System Login password submission
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setLoginLoading(true);
+    try {
+      const res = await fetch('/api/verify-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: loginPasswordInput })
+      });
+      if (res.ok) {
+        sessionStorage.setItem('app_authorized', 'true');
+        setIsAuthorized(true);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setLoginError(errData.error || '密碼錯誤，請重新輸入');
+      }
+    } catch (err) {
+      setLoginError('與伺服器連線失敗，請檢查後端服務是否正常。');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  // Operation password state
+  const [operationPassword, setOperationPassword] = useState<string | null>(null);
+
+  // Password validation helper (Calling backend for validation)
+  const checkPassword = async (actionName: string): Promise<string | null> => {
+    const pwd = prompt(`進行「${actionName}」操作，請輸入密碼：`);
+    if (pwd === null) return null;
+    
+    try {
+      const res = await fetch('/api/verify-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd })
+      });
+      if (res.ok) {
+        return pwd;
+      }
+    } catch (e) {}
+    
+    alert('密碼錯誤，操作已取消！');
+    return null;
+  };
 
   // Load all records on boot
   const fetchRecords = async () => {
@@ -112,8 +170,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchRecords();
-  }, []);
+    if (isAuthorized) {
+      fetchRecords();
+    }
+  }, [isAuthorized]);
 
   // Sync Form Sales + Tax -> Total
   useEffect(() => {
@@ -167,6 +227,11 @@ export default function App() {
   const handleSaveRecord = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!formRecordedBy || !formRecordedBy.trim()) {
+      alert('⚠️ 請填寫「登錄人」欄位才可儲存！');
+      return;
+    }
+
     // Verify consistency restriction: Sales + Tax = Total
     const sales = Number(formAmountSales) || 0;
     const tax = Number(formAmountTax) || 0;
@@ -195,6 +260,7 @@ export default function App() {
       approved_by: formApprovedBy,
       approved_at: formApprovedAt,
       imageUrl: formImageUrl || undefined,
+      recorded_by: formRecordedBy.trim(),
     };
 
     try {
@@ -202,10 +268,13 @@ export default function App() {
         // Update API
         const res = await fetch(`/api/records/${editingRecordId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-operation-password': operationPassword || ''
+          },
           body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error('更新憑證紀錄失敗');
+        if (!res.ok) throw new Error('更新憑證紀錄失敗，密碼錯誤或權限不足');
       } else {
         // Create API
         const res = await fetch('/api/records', {
@@ -226,7 +295,10 @@ export default function App() {
   };
 
   // Populate form with existing records for editing
-  const initiateEdit = (record: AccountingRecord) => {
+  const initiateEdit = async (record: AccountingRecord) => {
+    const pwd = await checkPassword('修改傳票資料');
+    if (!pwd) return;
+    setOperationPassword(pwd);
     setEditingRecordId(record.id);
     setFormDate(record.date);
     setFormInvoiceNumber(record.invoice_number);
@@ -244,6 +316,7 @@ export default function App() {
     setFormStatus(record.status || '免簽核/待查閱');
     setFormApprovedBy(record.approved_by || '');
     setFormApprovedAt(record.approved_at || '');
+    setFormRecordedBy(record.recorded_by || '');
     setAutoCalcTax(false); // Turn off auto-calc during edit to preserve custom inputted fields
     setFormImageUrl(record.imageUrl || null);
     setShowFormModal(true);
@@ -252,11 +325,12 @@ export default function App() {
   // Reset form helper
   const resetForm = () => {
     setEditingRecordId(null);
+    setOperationPassword(null);
     setFormDate(new Date().toISOString().split('T')[0]);
     setFormInvoiceNumber('');
     setFormSellerName('');
     setFormSellerTaxId('');
-    setFormBuyerTaxId(yuanqiVatId);
+    setFormBuyerTaxId('');
     setFormSummary('');
     setFormCategory('辦公用品');
     setFormAmountSales(0);
@@ -268,6 +342,7 @@ export default function App() {
     setFormStatus('免簽核/待查閱');
     setFormApprovedBy('');
     setFormApprovedAt('');
+    setFormRecordedBy('');
     setAutoCalcTax(true);
     setUploadedImageBase64(null);
     setUploadedImageMimeType(null);
@@ -283,12 +358,17 @@ export default function App() {
 
   // Delete API Caller
   const handleDeleteRecord = async (id: string, vendor: string) => {
+    const pwd = await checkPassword('刪除傳票資料');
+    if (!pwd) return;
     if (!confirm(`確定要刪除該筆位於 「${vendor}」 且難以復原的會計記帳憑證與傳票嗎？`)) {
       return;
     }
     try {
-      const res = await fetch(`/api/records/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('刪除失敗');
+      const res = await fetch(`/api/records/${id}`, { 
+        method: 'DELETE',
+        headers: { 'x-operation-password': pwd }
+      });
+      if (!res.ok) throw new Error('刪除失敗，密碼錯誤或權限不足');
       setRecords(prev => prev.filter(r => r.id !== id));
     } catch (err: any) {
       alert(err.message || '無法刪除紀錄');
@@ -375,7 +455,7 @@ export default function App() {
         setFormInvoiceNumber(parsed.invoice_number || '');
         setFormSellerName(parsed.seller_name || '');
         setFormSellerTaxId(parsed.seller_tax_id || '');
-        setFormBuyerTaxId(parsed.buyer_tax_id || yuanqiVatId);
+        setFormBuyerTaxId(parsed.buyer_tax_id || '');
         setFormSummary(parsed.summary || '');
         setFormCategory((parsed.category as ExpenseCategory) || '辦公用品');
         
@@ -419,6 +499,8 @@ export default function App() {
 
   // Fast approve / reject helper in-place for senior managers
   const handleFastApprove = async (record: AccountingRecord, actionStatus: '已核准' | '已退回' | '待簽核') => {
+    const pwd = await checkPassword(`變更簽核狀態為「${actionStatus}」`);
+    if (!pwd) return;
     const formattedNow = new Date().toISOString().replace('T', ' ').slice(0, 19);
     const payload = {
       ...record,
@@ -430,10 +512,13 @@ export default function App() {
     try {
       const res = await fetch(`/api/records/${record.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-operation-password': pwd
+        },
         body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error('快速簽核處置失敗');
+      if (!res.ok) throw new Error('快速簽核處置失敗，密碼錯誤或權限不足');
       
       // Update state local first to prevent refetching delay, then sync
       setRecords(prev => prev.map(r => r.id === record.id ? { ...r, ...payload } : r));
@@ -521,11 +606,13 @@ export default function App() {
   });
 
   // Export to CSV helper
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (filteredRecords.length === 0) {
       alert('無任何資料可供匯出');
       return;
     }
+    const pwd = await checkPassword('匯出 CSV 資料');
+    if (!pwd) return;
 
     // UTF-8 with BOM for Excel compatibility
     let csvContent = "\uFEFF";
@@ -551,6 +638,75 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
   };
+
+  if (!isAuthorized) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center font-sans antialiased transition-all duration-300 ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-100 text-slate-800'}`}>
+        <div className="absolute top-4 right-4">
+          <button
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+            className={`p-2 rounded-xl border transition-all cursor-pointer ${
+              isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white' : 'bg-white border-slate-300 text-slate-650 hover:bg-slate-100 shadow-sm'
+            }`}
+          >
+            {isDark ? '☀️ 淺色模式' : '🌙 深色模式'}
+          </button>
+        </div>
+        
+        <div className={`max-w-md w-full p-8 rounded-3xl border shadow-2xl backdrop-blur-md transition-all ${
+          isDark ? 'bg-slate-900/60 border-slate-800/80 shadow-black/40' : 'bg-white border-slate-200 shadow-slate-200/80'
+        }`}>
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="h-16 w-16 rounded-2xl bg-cyan-500 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-cyan-500/20">
+              元
+            </div>
+            <div>
+              <h2 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>元啟實業有限公司</h2>
+              <p className={`text-xs mt-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500 font-medium'}`}>
+                🗃️ 企業智慧型記帳與單據辨識系統
+              </p>
+            </div>
+          </div>
+          
+          <form onSubmit={handleLoginSubmit} className="mt-8 space-y-4">
+            <div className="space-y-1.5">
+              <label className={`text-[11px] font-bold block ${isDark ? 'text-slate-400' : 'text-slate-700'}`}>
+                🔒 請輸入系統登入密碼：
+              </label>
+              <input
+                type="password"
+                required
+                value={loginPasswordInput}
+                onChange={(e) => setLoginPasswordInput(e.target.value)}
+                placeholder="輸入登入密碼..."
+                className={`w-full rounded-xl p-3 text-sm focus:outline-none focus:border-cyan-500 transition-colors border font-semibold ${
+                  isDark ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-700' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 shadow-sm'
+                }`}
+              />
+            </div>
+            
+            {loginError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-semibold text-center">
+                ⚠️ {loginError}
+              </div>
+            )}
+            
+            <button
+              type="submit"
+              disabled={loginLoading}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 active:bg-cyan-600 disabled:bg-cyan-700 text-slate-950 py-3 rounded-xl font-bold transition-all shadow-lg shadow-cyan-500/10 cursor-pointer flex items-center justify-center gap-2 hover:scale-[1.01]"
+            >
+              {loginLoading ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                '驗證密碼並進入系統 🚀'
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen font-sans antialiased transition-all duration-200 ${isDark ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
@@ -668,11 +824,10 @@ export default function App() {
                     onDragLeave={handleDrag}
                     onDragOver={handleDrag}
                     onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`relative border-2 border-dashed rounded-2xl py-12 px-6 text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-3 select-none ${
+                    className={`relative border-2 border-dashed rounded-2xl py-10 px-6 text-center transition-all flex flex-col items-center justify-center gap-4 select-none ${
                       dragActive 
                         ? 'border-cyan-400 bg-cyan-950/20' 
-                        : isDark ? 'border-slate-800 bg-slate-900/40 hover:border-slate-700 hover:bg-slate-900/80' : 'border-slate-300 bg-slate-50/50 hover:border-slate-400 hover:bg-slate-100'
+                        : isDark ? 'border-slate-800 bg-slate-900/40 hover:border-slate-700/80 hover:bg-slate-900/60' : 'border-slate-300 bg-slate-50/50 hover:border-slate-400/80 hover:bg-slate-100/60'
                     }`}
                   >
                     {ocrLoading ? (
@@ -694,11 +849,39 @@ export default function App() {
                           accept="image/*"
                           onChange={handleFileChange}
                         />
-                        <div className="flex flex-col items-center gap-2">
+                        <input
+                          ref={cameraInputRef}
+                          type="file"
+                          className="hidden"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={handleFileChange}
+                        />
+                        <div className="flex flex-col items-center gap-3">
                           <p className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-                            拖曳檔案至此，或 <span className="text-cyan-600 underline decoration-cyan-500/50">瀏覽本機檔案</span>
+                            拖曳憑證相片至此，或點選下方按鈕上傳：
                           </p>
-                          <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>精準擷取台灣三聯式發票、免稅收據、國外 Commercial Invoice</p>
+                          <div className="flex flex-wrap justify-center gap-3 mt-1">
+                            <button
+                              type="button"
+                              onClick={() => cameraInputRef.current?.click()}
+                              className="bg-cyan-500 hover:bg-cyan-400 active:bg-cyan-600 text-slate-950 px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 shadow-md shadow-cyan-500/10 cursor-pointer hover:scale-[1.02]"
+                            >
+                              📸 拍照上傳憑證
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => fileInputRef.current?.click()}
+                              className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 border cursor-pointer hover:scale-[1.02] ${
+                                isDark 
+                                  ? 'bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-200' 
+                                  : 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800 shadow-sm'
+                              }`}
+                            >
+                              📁 選擇相簿相片
+                            </button>
+                          </div>
+                          <p className={`text-xs mt-1.5 ${isDark ? 'text-slate-405' : 'text-slate-600'}`}>精準擷取台灣三聯式發票、免稅收據、國外 Commercial Invoice</p>
                         </div>
                       </>
                     )}
@@ -1024,7 +1207,8 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <table className={`w-full border-collapse text-left text-xs transition-colors ${isDark ? 'text-slate-300' : 'text-slate-900'}`}>
+              <>
+              <table className={`w-full border-collapse text-left text-xs transition-colors hidden md:table ${isDark ? 'text-slate-300' : 'text-slate-900'}`}>
                 <thead>
                   <tr className={`border-b text-[10px] uppercase tracking-wider font-bold select-none transition-all ${isDark ? 'border-slate-800 bg-slate-950/80 text-slate-400' : 'border-slate-300 bg-slate-100 text-slate-850'}`}>
                     <th className="py-3.5 px-4 font-semibold text-center select-none">扣抵</th>
@@ -1032,6 +1216,7 @@ export default function App() {
                     <th className="py-3.5 px-3 font-semibold">帳務類型</th>
                     <th className="py-3.5 px-3 font-semibold">發票/憑證編號</th>
                     <th className="py-3.5 px-3 font-semibold">簽核狀態</th>
+                    <th className="py-3.5 px-3 font-semibold">登錄人</th>
                     <th className="py-3.5 px-4 font-semibold">賣方商號 / 統編</th>
                     <th className="py-3.5 px-4 font-semibold">品名摘要說明</th>
                     <th className="py-3.5 px-4 font-semibold">會計科目</th>
@@ -1084,11 +1269,11 @@ export default function App() {
                         {/* Billing Type badge */}
                         <td className="py-3.5 px-3">
                           {rec.billing_type === '事前請款' ? (
-                            <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-900/40 whitespace-nowrap" title="尚未出款支出，屬於前置請款預案">
+                            <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-955 text-indigo-300 border border-indigo-900/40 whitespace-nowrap" title="尚未出款支出，屬於前置請款預案">
                               📝 事前請款
                             </span>
                           ) : (
-                            <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-900/40 whitespace-nowrap" title="已代墊或完成之報銷/支出憑證">
+                            <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-955 text-emerald-300 border border-emerald-900/40 whitespace-nowrap" title="已代墊或完成之報銷/支出憑證">
                               💰 事後報帳
                             </span>
                           )}
@@ -1122,7 +1307,7 @@ export default function App() {
                           <div className="space-y-1">
                             {rec.status === '待簽核' ? (
                               <div className="flex flex-col gap-1 items-start">
-                                <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800">
+                                <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-955 text-amber-400 border border-amber-800">
                                   🟡 待簽核
                                 </span>
                                 {/* Fast action for manager */}
@@ -1136,7 +1321,7 @@ export default function App() {
                                   </button>
                                   <button
                                     onClick={() => handleFastApprove(rec, '已退回')}
-                                    className="text-[9px] bg-rose-955 hover:bg-rose-900 text-rose-300 px-1.5 py-0.5 rounded border border-rose-800 cursor-pointer transition-colors"
+                                    className="text-[9px] bg-rose-955 hover:bg-rose-900 text-rose-305 px-1.5 py-0.5 rounded border border-rose-800 cursor-pointer transition-colors"
                                     title="一秒點擊退回傳票"
                                   >
                                     退回
@@ -1159,12 +1344,12 @@ export default function App() {
                               </div>
                             ) : rec.status === '已退回' ? (
                               <div className="flex flex-col gap-1 items-start">
-                                <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-900">
+                                <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-955 text-rose-300 border border-rose-900">
                                   🔴 已退回
                                 </span>
                                 <button
                                   onClick={() => handleFastApprove(rec, '待簽核')}
-                                  className="text-[9px] bg-slate-800 hover:bg-slate-705 text-slate-300 px-1 py-0.5 rounded cursor-pointer"
+                                  className="text-[9px] bg-slate-800 hover:bg-slate-705 text-slate-305 px-1 py-0.5 rounded cursor-pointer"
                                   title="重新送審狀態"
                                 >
                                   重審
@@ -1177,7 +1362,30 @@ export default function App() {
                             )}
                           </div>
                         </td>
-                                                  {/* Category badge */}
+
+                        {/* Recorded By */}
+                        <td className={`py-3.5 px-3 font-semibold whitespace-nowrap ${isDark ? 'text-slate-350' : 'text-slate-750'}`}>
+                          {rec.recorded_by || <span className="text-slate-500 italic">—</span>}
+                        </td>
+
+                        {/* Seller Name / Tax ID */}
+                        <td className="py-3.5 px-4 font-medium select-all">
+                          <div className={`font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                            {rec.seller_name || '—'}
+                          </div>
+                          {rec.seller_tax_id && (
+                            <div className={`text-[10px] font-mono mt-0.5 ${isDark ? 'text-slate-500' : 'text-slate-505'}`}>
+                              統編: {rec.seller_tax_id}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Summary */}
+                        <td className={`py-3.5 px-4 max-w-[180px] truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`} title={rec.summary}>
+                          {rec.summary}
+                        </td>
+
+                        {/* Category badge */}
                         <td className="py-3.5 px-4">
                           <span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-md ${
                             isDark 
@@ -1224,7 +1432,7 @@ export default function App() {
                             {rec.imageUrl && (
                               <button
                                 onClick={() => setSelectedFullscreenImage(rec.imageUrl || null)}
-                                className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${isDark ? 'bg-cyan-955 hover:bg-cyan-900 text-cyan-400 hover:text-white border border-cyan-900/60' : 'bg-cyan-50 hover:bg-cyan-100 text-cyan-705 border border-cyan-200 shadow-sm'}`}
+                                className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${isDark ? 'bg-cyan-955 hover:bg-cyan-900 text-cyan-404 hover:text-white border border-cyan-900/60' : 'bg-cyan-50 hover:bg-cyan-100 text-cyan-705 border border-cyan-200 shadow-sm'}`}
                                 title="查閱留存的照片/發票憑證"
                               >
                                 <Eye className="h-3.5 w-3.5" />
@@ -1239,27 +1447,7 @@ export default function App() {
                             </button>
                             <button
                               onClick={() => handleDeleteRecord(rec.id, rec.seller_name)}
-                              className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${isDark ? 'bg-red-955 hover:bg-red-900/80 text-red-400 hover:text-red-200' : 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-205 shadow-sm'}`}
-                              title="作廢、撤銷此筆傳票"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </td>
-
-                        {/* Inline Actions */}
-                        <td className="py-3.5 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => initiateEdit(rec)}
-                              className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-250 shadow-sm'}`}
-                              title="編立、校對此筆記帳傳票"
-                            >
-                              <Edit3 className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteRecord(rec.id, rec.seller_name)}
-                              className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${isDark ? 'bg-red-950 hover:bg-red-900/80 text-red-400 hover:text-red-200' : 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-205 shadow-sm'}`}
+                              className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${isDark ? 'bg-red-955 hover:bg-red-900/80 text-red-400 hover:text-red-200' : 'bg-red-50 hover:bg-red-100 text-red-755 border border-red-205 shadow-sm'}`}
                               title="作廢、撤銷此筆傳票"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -1272,6 +1460,99 @@ export default function App() {
                   })}
                 </tbody>
               </table>
+
+              {/* Mobile view: Card List */}
+              <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
+                {filteredRecords.map((rec) => {
+                  const isDeductible = checkIsDeductible(rec);
+                  return (
+                    <div 
+                      key={rec.id}
+                      className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                        isDark 
+                          ? 'bg-slate-900/85 border-slate-800 text-slate-200' 
+                          : 'bg-white border-slate-200 text-slate-800 shadow-sm shadow-slate-100'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="font-mono text-xs text-slate-505 font-semibold">{rec.date}</span>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {isDeductible ? (
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-700 border-emerald-250 shadow-sm'}`}>
+                              可扣抵
+                            </span>
+                          ) : (
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${isDark ? 'bg-slate-800 text-slate-500 border-slate-800' : 'bg-slate-100 text-slate-700 border-slate-250 shadow-sm'}`}>
+                              不扣抵
+                            </span>
+                          )}
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                            {rec.category}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="font-bold text-sm leading-snug">{rec.seller_name || '—'}</div>
+                        {rec.seller_tax_id && (
+                          <div className="text-[10px] font-mono text-slate-500">統編: {rec.seller_tax_id}</div>
+                        )}
+                        <div className="text-xs text-slate-500 font-medium">摘要: {rec.summary}</div>
+                      </div>
+
+                      <div className={`flex justify-between items-baseline border-t border-b py-2 ${isDark ? 'border-slate-800/60' : 'border-slate-150'}`}>
+                        <div className="text-[10px] text-slate-550 font-semibold">
+                          {rec.billing_type} • {rec.status}
+                          {rec.recorded_by && ` • 登錄: ${rec.recorded_by}`}
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] font-mono mr-1 text-slate-500">{rec.currency}</span>
+                          <span className="font-mono font-black text-base">{rec.amount_total.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        <div className="flex items-center gap-1.5">
+                          {rec.imageUrl && (
+                            <button
+                              onClick={() => setSelectedFullscreenImage(rec.imageUrl || null)}
+                              className={`p-1.5 px-3 rounded-lg text-xs transition-colors cursor-pointer flex items-center gap-1 ${
+                                isDark ? 'bg-cyan-955 hover:bg-cyan-900 text-cyan-400 hover:text-white border border-cyan-900/60' : 'bg-cyan-50 text-cyan-705 border border-cyan-200'
+                              }`}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              <span>憑證</span>
+                            </button>
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => initiateEdit(rec)}
+                            className={`p-1.5 px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${
+                              isDark ? 'bg-slate-800 text-slate-205 border border-slate-700' : 'bg-slate-105 text-slate-800 border border-slate-250 shadow-sm'
+                            }`}
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            <span>修改</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRecord(rec.id, rec.seller_name)}
+                            className={`p-1.5 px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${
+                              isDark ? 'bg-red-955 text-red-400 border border-red-900/60' : 'bg-red-50 text-red-755 border border-red-200 shadow-sm'
+                            }`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>刪除</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              </>
             )}
           </div>
 
@@ -1679,6 +1960,8 @@ export default function App() {
                         
                         <button
                           onClick={async () => {
+                            const pwd = await checkPassword('核准放行傳票');
+                            if (!pwd) return;
                             const formattedNow = new Date().toISOString().replace('T', ' ').slice(0, 19);
                             let finalNotes = selectedRec.notes || '';
                             if (commentText.trim()) {
@@ -1696,10 +1979,13 @@ export default function App() {
                             try {
                               const res = await fetch(`/api/records/${selectedRec.id}`, {
                                 method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 
+                                  'Content-Type': 'application/json',
+                                  'x-operation-password': pwd
+                                },
                                 body: JSON.stringify(payload)
                               });
-                              if (!res.ok) throw new Error('核准放行資料庫提交失敗');
+                              if (!res.ok) throw new Error('核准放行資料庫提交失敗，密碼錯誤或權限不足');
                               
                               setRecords(prev => prev.map(r => r.id === selectedRec.id ? { ...r, ...payload } : r));
                               setCommentText('');
@@ -1718,6 +2004,8 @@ export default function App() {
                         
                         <button
                           onClick={async () => {
+                            const pwd = await checkPassword('駁回/退回傳票');
+                            if (!pwd) return;
                             let finalNotes = selectedRec.notes || '';
                             if (commentText.trim()) {
                               finalNotes = `${finalNotes} [${currentApproverName}駁回理由: ${commentText}]`.trim();
@@ -1734,10 +2022,13 @@ export default function App() {
                             try {
                               const res = await fetch(`/api/records/${selectedRec.id}`, {
                                 method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 
+                                  'Content-Type': 'application/json',
+                                  'x-operation-password': pwd
+                                },
                                 body: JSON.stringify(payload)
                               });
-                              if (!res.ok) throw new Error('駁回退回資料庫提交失敗');
+                              if (!res.ok) throw new Error('駁回退回資料庫提交失敗，密碼錯誤或權限不足');
                               
                               setRecords(prev => prev.map(r => r.id === selectedRec.id ? { ...r, ...payload } : r));
                               setCommentText('');
@@ -1847,9 +2138,30 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className={`p-3 rounded-2xl flex items-start gap-2.5 border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                  <HelpCircle className={`h-4.5 w-4.5 shrink-0 mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600'}`} />
+                  <div className="space-y-0.5">
+                    <p className={`text-xs font-semibold ${isDark ? 'text-slate-300' : 'text-slate-900 font-extrabold'}`}>自動判定為：不可扣抵營業稅項目</p>
+                    <p className={`text-[10px] ${isDark ? 'text-slate-550' : 'text-slate-600 font-medium'}`}>
+                      原因：
+                      {!formBuyerTaxId || !formBuyerTaxId.trim()
+                        ? '未填寫買方統一編號。'
+                        : formBuyerTaxId.trim() !== yuanqiVatId
+                        ? '買方統一編號非本公司統編。'
+                        : (Number(formAmountTax) || 0) <= 0
+                        ? '無營業稅額（免稅或收據）。'
+                        : formCategory === '旅費-國外'
+                        ? '國外旅費依法不得扣抵營業稅。'
+                        : '未符合扣抵規定。'
+                      }
+                      此筆交易之進項稅額無法申報扣抵營業稅，將全額併入費用。
+                    </p>
+                  </div>
+                </div>
+              )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 
                 {/* Date */}
                 <div className="space-y-1.5">
@@ -1872,6 +2184,19 @@ export default function App() {
                     value={formInvoiceNumber}
                     onChange={(e) => setFormInvoiceNumber(e.target.value)}
                     className={`w-full border rounded-xl py-2 px-3 text-xs focus:outline-none focus:border-cyan-500 uppercase font-mono tracking-wider ${isDark ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-600' : 'bg-white border-slate-350 text-slate-900 placeholder-slate-400 font-bold'}`}
+                  />
+                </div>
+
+                {/* Recorded By */}
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-semibold ${isDark ? 'text-slate-400' : 'text-slate-700 font-bold'}`}>登錄人 <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="請輸入經辦/登錄人..."
+                    value={formRecordedBy}
+                    onChange={(e) => setFormRecordedBy(e.target.value)}
+                    className={`w-full border rounded-xl py-2 px-3 text-xs focus:outline-none focus:border-cyan-500 ${isDark ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-700' : 'bg-white border-slate-350 text-slate-900 placeholder-slate-400 font-bold'}`}
                   />
                 </div>
 

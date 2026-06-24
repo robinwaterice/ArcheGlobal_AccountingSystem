@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
 
 // High-capacity JSON parsing for supporting larger base64 invoice images
 app.use(express.json({ limit: '15mb' }));
@@ -40,10 +40,12 @@ function readRecords() {
       if (Array.isArray(records)) {
         return records.map((r: any) => ({
           ...r,
+          date: String(r.date || '').split('T')[0].split(' ')[0],
           billing_type: r.billing_type || '事後報帳',
           status: r.status || '免簽核/待查閱',
           approved_by: r.approved_by || '',
-          approved_at: r.approved_at || ''
+          approved_at: r.approved_at || '',
+          recorded_by: r.recorded_by || ''
         }));
       }
     }
@@ -69,50 +71,178 @@ function getGeminiClient(): GoogleGenAI {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error(
-        'GEMINI_API_KEY 尚未設定，請在右上方選單 [Settings > Secrets] 設定您的金鑰。'
+        'GEMINI_API_KEY 尚未設定，請在專案根目錄的 .env 檔案中設定您的金鑰。'
       );
     }
     aiInstance = new GoogleGenAI({
       apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
     });
   }
   return aiInstance;
 }
 
+// Helper function to sync record updates to Google Sheets via Apps Script Web App (Background Async)
+function syncToGoogleSheets(action: 'create' | 'update' | 'delete', record: any) {
+  const url = process.env.GOOGLE_SCRIPT_URL;
+  if (!url) return;
+
+  // Execute asynchronously in the background so it doesn't block the API response
+  (async () => {
+    try {
+      console.log(`[Google Sheets 同步] 正在同步 "${action}" 操作，ID: ${record.id}`);
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, record })
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP 錯誤! 狀態碼: ${response.status}`);
+      }
+      const result = await response.json();
+      if (result.success) {
+        console.log(`[Google Sheets 同步] 同步成功 (${action})`);
+      } else {
+        console.error(`[Google Sheets 同步] 同步失敗: ${result.error}`);
+      }
+    } catch (error: any) {
+      console.error(`[Google Sheets 同步] 連線異常:`, error.message || error);
+    }
+  })();
+}
+
+// Middleware to check operator password for editing and deleting
+const checkOperatorPassword = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const clientPassword = req.headers['x-operation-password'];
+  const correctPassword = process.env.OPERATOR_PASSWORD;
+  
+  if (!correctPassword) {
+    return res.status(500).json({ error: '系統錯誤：後端環境變數 OPERATOR_PASSWORD 尚未設定。' });
+  }
+  
+  if (clientPassword !== correctPassword) {
+    return res.status(403).json({ error: '安全核對失敗：操作密碼不正確或未提供。' });
+  }
+  next();
+};
+
 // API Routes
 
+// Verify password API endpoint
+app.post('/api/verify-password', (req, res) => {
+  const { password } = req.body;
+  const correctPassword = process.env.OPERATOR_PASSWORD;
+  if (!correctPassword) {
+    return res.status(500).json({ success: false, error: '後端環境變數 OPERATOR_PASSWORD 尚未設定。' });
+  }
+  if (password === correctPassword) {
+    res.json({ success: true });
+  } else {
+    res.status(403).json({ success: false, error: '密碼錯誤' });
+  }
+});
+
+// Verify login password API endpoint
+app.post('/api/verify-login', (req, res) => {
+  const { password } = req.body;
+  const correctPassword = process.env.LOGIN_PASSWORD;
+  if (!correctPassword) {
+    return res.status(500).json({ success: false, error: '後端環境變數 LOGIN_PASSWORD 尚未設定。' });
+  }
+  if (password === correctPassword) {
+    res.json({ success: true });
+  } else {
+    res.status(403).json({ success: false, error: '登入密碼錯誤' });
+  }
+});
+
 // Load all accounting records
-app.get('/api/records', (req, res) => {
-  const records = readRecords();
+app.get('/api/records', async (req, res) => {
+  const url = process.env.GOOGLE_SCRIPT_URL;
+  let records = readRecords();
+
+  if (url) {
+    try {
+      console.log('正在從 Google Sheets 獲取最新資料...');
+      const response = await fetch(url);
+      if (response.ok) {
+        const sheetsRecords = await response.json();
+        if (Array.isArray(sheetsRecords)) {
+          records = sheetsRecords.map((r: any) => ({
+            id: String(r.id || ''),
+            date: String(r.date || '').split('T')[0].split(' ')[0],
+            billing_type: r.billing_type || '事後報帳',
+            invoice_number: String(r.invoice_number || ''),
+            status: r.status || '免簽核/待查閱',
+            approved_by: String(r.approved_by || ''),
+            approved_at: String(r.approved_at || ''),
+            seller_name: String(r.seller_name || ''),
+            seller_tax_id: String(r.seller_tax_id || ''),
+            buyer_tax_id: String(r.buyer_tax_id || ''),
+            summary: String(r.summary || ''),
+            category: r.category || '其他支出',
+            amount_sales: Number(r.amount_sales) || 0,
+            amount_tax: Number(r.amount_tax) || 0,
+            amount_total: Number(r.amount_total) || 0,
+            currency: String(r.currency || 'TWD'),
+            notes: String(r.notes || ''),
+            createdAt: r.createdAt ? String(r.createdAt) : new Date().toISOString(),
+            imageUrl: String(r.imageUrl || ''),
+            recorded_by: String(r.recorded_by || '')
+          }));
+          writeRecords(records);
+          console.log('已成功從 Google Sheets 同步並更新本地快取！');
+        }
+      } else {
+        console.warn(`從 Google Sheets 載入失敗 (HTTP ${response.status})，將使用本地快取。`);
+      }
+    } catch (error: any) {
+      console.error('從 Google Sheets 獲取資料發生連線錯誤，使用本地快取：', error.message || error);
+    }
+  }
+
   res.json({ records, yuanqiVatId: YUANQI_VAT_ID });
 });
 
 // Create an accounting record
 app.post('/api/records', (req, res) => {
+  if (!req.body.recorded_by || !req.body.recorded_by.trim()) {
+    return res.status(400).json({ error: '登錄失敗：必須填寫登錄人！' });
+  }
   const records = readRecords();
   const newRecord = {
     ...req.body,
+    date: String(req.body.date || '').split('T')[0].split(' ')[0],
     id: req.body.id || 'rec-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
     createdAt: req.body.createdAt || new Date().toISOString()
   };
   records.push(newRecord);
   writeRecords(records);
+  
+  // Trigger async sync to Google Sheets
+  syncToGoogleSheets('create', newRecord);
+
   res.status(201).json(newRecord);
 });
 
 // Update an accounting record
-app.put('/api/records/:id', (req, res) => {
+app.put('/api/records/:id', checkOperatorPassword, (req, res) => {
+  if (req.body.recorded_by !== undefined && (!req.body.recorded_by || !req.body.recorded_by.trim())) {
+    return res.status(400).json({ error: '修改失敗：必須填寫登錄人！' });
+  }
   const records = readRecords();
   const { id } = req.params;
   const index = records.findIndex((r: any) => r.id === id);
   if (index !== -1) {
-    records[index] = { ...records[index], ...req.body };
+    const updatedRecord = { 
+      ...req.body,
+      date: req.body.date ? String(req.body.date).split('T')[0].split(' ')[0] : records[index].date
+    };
+    records[index] = { ...records[index], ...updatedRecord };
     writeRecords(records);
+
+    // Trigger async sync to Google Sheets
+    syncToGoogleSheets('update', records[index]);
+
     res.json(records[index]);
   } else {
     res.status(404).json({ error: `Record with id ${id} not found.` });
@@ -120,12 +250,19 @@ app.put('/api/records/:id', (req, res) => {
 });
 
 // Delete an accounting record
-app.delete('/api/records/:id', (req, res) => {
+app.delete('/api/records/:id', checkOperatorPassword, (req, res) => {
   const records = readRecords();
   const { id } = req.params;
+  const targetRecord = records.find((r: any) => r.id === id);
   const updatedRecords = records.filter((r: any) => r.id !== id);
   if (records.length !== updatedRecords.length) {
     writeRecords(updatedRecords);
+
+    // Trigger async sync to Google Sheets
+    if (targetRecord) {
+      syncToGoogleSheets('delete', targetRecord);
+    }
+
     res.json({ success: true, message: `Record ${id} deleted successfully.` });
   } else {
     res.status(404).json({ error: `Record ${id} not found.` });
@@ -147,7 +284,7 @@ app.post('/api/ocr', async (req, res) => {
 
 規範：
 1. 語言與名稱：台灣單據以繁體中文辨識；國外單據（如英文、日文）保留原始賣方名稱與摘要關鍵字（核對用），但在 category 會計科目則必須歸入在列出的中文分類。
-2. 統一編號：仔細檢查有沒有買受人統一編號（買方統編，元啟實業的統一編號是 "${YUANQI_VAT_ID}"），以及賣方統一編號。這對扣抵營業稅至關重要。
+2. 統一編號：仔細檢查有沒有買受人統一編號（買方統編，元啟實業的統一編號是 "${YUANQI_VAT_ID}"）。「僅在發票影像中明確印有該統編」時，才填寫 buyer_tax_id 為 "${YUANQI_VAT_ID}"，若無印出、非此統編、或是看不清，則必須設為空字串 ""，絕對不可自行預設或虛構。同時也請辨識賣方統一編號。這對扣抵營業稅至關重要。
 3. 金額拆解防呆：區分 未稅金額（amount_sales）、稅額（amount_tax）與含稅總金額（amount_total）。
    - 若單據是免稅、收據或海外憑證，則 amount_sales = amount_total, amount_tax = 0。
    - 務必確保：amount_sales + amount_tax = amount_total（數學一致性防呆）。
@@ -188,7 +325,7 @@ app.post('/api/ocr', async (req, res) => {
     parts.push({ text: userInput });
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
+      model: 'gemini-2.5-flash',
       contents: { parts },
       config: {
         systemInstruction: systemPromptMessage,
@@ -214,7 +351,7 @@ app.post('/api/ocr', async (req, res) => {
             },
             buyer_tax_id: {
               type: Type.STRING,
-              description: `買方統一編號(公司統編)。如果公司統編為 ${YUANQI_VAT_ID} 請精確反映`
+              description: `買方統一編號(公司統編)。必須只在發票或憑證影像中「明確印有此統編 ${YUANQI_VAT_ID}」時才填寫。若沒有印出或看不清，必須填寫空字串 ""`
             },
             summary: {
               type: Type.STRING,
