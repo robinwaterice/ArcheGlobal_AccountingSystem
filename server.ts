@@ -113,7 +113,8 @@ function syncToGoogleSheets(action: 'create' | 'update' | 'delete', record: any)
 // Middleware to check operator password for editing and deleting
 const checkOperatorPassword = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const clientPassword = req.headers['x-operation-password'];
-  const correctPassword = process.env.OPERATOR_PASSWORD;
+  // 去除可能的首尾引號與多餘空格防呆
+  const correctPassword = process.env.OPERATOR_PASSWORD ? process.env.OPERATOR_PASSWORD.replace(/^["']|["']$/g, '').trim() : undefined;
   
   if (!correctPassword) {
     return res.status(500).json({ error: '系統錯誤：後端環境變數 OPERATOR_PASSWORD 尚未設定。' });
@@ -130,7 +131,8 @@ const checkOperatorPassword = (req: express.Request, res: express.Response, next
 // Verify password API endpoint
 app.post('/api/verify-password', (req, res) => {
   const { password } = req.body;
-  const correctPassword = process.env.OPERATOR_PASSWORD;
+  // 去除可能的首尾引號與多餘空格防呆
+  const correctPassword = process.env.OPERATOR_PASSWORD ? process.env.OPERATOR_PASSWORD.replace(/^["']|["']$/g, '').trim() : undefined;
   if (!correctPassword) {
     return res.status(500).json({ success: false, error: '後端環境變數 OPERATOR_PASSWORD 尚未設定。' });
   }
@@ -144,7 +146,8 @@ app.post('/api/verify-password', (req, res) => {
 // Verify login password API endpoint
 app.post('/api/verify-login', (req, res) => {
   const { password } = req.body;
-  const correctPassword = process.env.LOGIN_PASSWORD;
+  // 去除可能的首尾引號與多餘空格防呆
+  const correctPassword = process.env.LOGIN_PASSWORD ? process.env.LOGIN_PASSWORD.replace(/^["']|["']$/g, '').trim() : undefined;
   if (!correctPassword) {
     return res.status(500).json({ success: false, error: '後端環境變數 LOGIN_PASSWORD 尚未設定。' });
   }
