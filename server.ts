@@ -134,7 +134,7 @@ const checkOperatorPassword = (req: express.Request, res: express.Response, next
 // API Routes
 
 // Verify password API endpoint
-app.post('/api/verify-password', (req, res) => {
+app.post(['/api/verify-password', '/verify-password'], (req, res) => {
   const { password } = req.body;
   const correctPassword = getCleanEnvVar('OPERATOR_PASSWORD');
   if (!correctPassword) {
@@ -148,7 +148,7 @@ app.post('/api/verify-password', (req, res) => {
 });
 
 // Verify login password API endpoint
-app.post('/api/verify-login', (req, res) => {
+app.post(['/api/verify-login', '/verify-login'], (req, res) => {
   const { password } = req.body;
   const correctPassword = getCleanEnvVar('LOGIN_PASSWORD');
   if (!correctPassword) {
@@ -162,7 +162,7 @@ app.post('/api/verify-login', (req, res) => {
 });
 
 // Load all accounting records
-app.get('/api/records', async (req, res) => {
+app.get(['/api/records', '/records'], async (req, res) => {
   const url = getCleanEnvVar('GOOGLE_SCRIPT_URL');
   let records = readRecords();
 
@@ -210,7 +210,7 @@ app.get('/api/records', async (req, res) => {
 });
 
 // Create an accounting record
-app.post('/api/records', (req, res) => {
+app.post(['/api/records', '/records'], (req, res) => {
   if (!req.body.recorded_by || !req.body.recorded_by.trim()) {
     return res.status(400).json({ error: '登錄失敗：必須填寫登錄人！' });
   }
@@ -231,7 +231,7 @@ app.post('/api/records', (req, res) => {
 });
 
 // Update an accounting record
-app.put('/api/records/:id', checkOperatorPassword, (req, res) => {
+app.put(['/api/records/:id', '/records/:id'], checkOperatorPassword, (req, res) => {
   if (req.body.recorded_by !== undefined && (!req.body.recorded_by || !req.body.recorded_by.trim())) {
     return res.status(400).json({ error: '修改失敗：必須填寫登錄人！' });
   }
@@ -256,7 +256,7 @@ app.put('/api/records/:id', checkOperatorPassword, (req, res) => {
 });
 
 // Delete an accounting record
-app.delete('/api/records/:id', checkOperatorPassword, (req, res) => {
+app.delete(['/api/records/:id', '/records/:id'], checkOperatorPassword, (req, res) => {
   const records = readRecords();
   const { id } = req.params;
   const targetRecord = records.find((r: any) => r.id === id);
@@ -276,7 +276,7 @@ app.delete('/api/records/:id', checkOperatorPassword, (req, res) => {
 });
 
 // Gemini OCR Parser Route
-app.post('/api/ocr', async (req, res) => {
+app.post(['/api/ocr', '/ocr'], async (req, res) => {
   const { base64Image, mimeType, description } = req.body;
 
   try {
