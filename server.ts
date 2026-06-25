@@ -19,22 +19,39 @@ const getCleanEnvVar = (key: string): string => {
 app.use(express.json({ limit: '15mb' }));
 
 const isVercel = !!process.env.VERCEL;
-const DATA_DIR = isVercel ? '/tmp' : path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'records.json');
-
-// Ensure data directory and file exist
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+let DATA_DIR = isVercel ? '/tmp' : path.join(process.cwd(), 'data');
+let DATA_FILE = path.join(DATA_DIR, 'records.json');
 
 // Yuanqi corporate tax ID is simulated as "60327997"
 const YUANQI_VAT_ID = '60327997';
-
 const SEED_RECORDS: any[] = [];
 
-// Initialize database with seed records if empty
-if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(SEED_RECORDS, null, 2), 'utf8');
+// Ensure data directory and file exist with automatic write-fallback to /tmp
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(DATA_FILE)) {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(SEED_RECORDS, null, 2), 'utf8');
+  }
+} catch (err) {
+  console.error('Failed to initialize local cache file:', err);
+  if (DATA_DIR !== '/tmp') {
+    try {
+      console.warn('Attempting fallback write to /tmp...');
+      DATA_DIR = '/tmp';
+      DATA_FILE = path.join(DATA_DIR, 'records.json');
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      if (!fs.existsSync(DATA_FILE)) {
+        fs.writeFileSync(DATA_FILE, JSON.stringify(SEED_RECORDS, null, 2), 'utf8');
+      }
+      console.log('Successfully fell back to /tmp cache.');
+    } catch (fallbackErr) {
+      console.error('Failed fallback write to /tmp:', fallbackErr);
+    }
+  }
 }
 
 // Helper to read records safely with property level backward-compatibility fallbacks
