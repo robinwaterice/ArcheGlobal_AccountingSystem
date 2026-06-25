@@ -161,6 +161,19 @@ app.post(['/api/verify-login', '/verify-login'], (req, res) => {
   }
 });
 
+// Safe Environment variable debug endpoint (returns only key names and status, NO values)
+app.get(['/api/debug-env', '/debug-env'], (req, res) => {
+  res.json({
+    keys: Object.keys(process.env).filter(k => !k.startsWith('npm_') && !k.startsWith('VSCODE_')),
+    nodeEnv: process.env.NODE_ENV,
+    isVercel: !!process.env.VERCEL,
+    hasLoginPassword: !!process.env.LOGIN_PASSWORD,
+    hasOperatorPassword: !!process.env.OPERATOR_PASSWORD,
+    hasGeminiApiKey: !!process.env.GEMINI_API_KEY,
+    hasGoogleScriptUrl: !!process.env.GOOGLE_SCRIPT_URL,
+  });
+});
+
 // Load all accounting records
 app.get(['/api/records', '/records'], async (req, res) => {
   const url = getCleanEnvVar('GOOGLE_SCRIPT_URL');
