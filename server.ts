@@ -455,6 +455,12 @@ async function setupViteOrStaticAndListen() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    // Prevent browser from caching the Service Worker file
+    app.get('/sw.js', (req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Content-Type', 'application/javascript');
+      res.sendFile(path.join(distPath, 'sw.js'));
+    });
     app.use(express.static(distPath));
     // Serve index.html for SPA on non-API routes
     app.get('*', (req, res, next) => {
