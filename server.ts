@@ -179,7 +179,30 @@ app.post(['/api/verify-login', '/verify-login'], (req, res) => {
 });
 
 // Safe Environment variable debug endpoint (returns only key names and status, NO values)
-app.get(['/api/debug-env', '/debug-env'], (req, res) => {
+app.get(['/api/debug-env', '/debug-env'], async (req, res) => {
+  const url = getCleanEnvVar('GOOGLE_SCRIPT_URL');
+  let fetchTest: any = { status: 'idle' };
+
+  if (url) {
+    try {
+      const start = Date.now();
+      const testRes = await fetch(url, { method: 'GET' });
+      fetchTest = {
+        status: 'success',
+        statusCode: testRes.status,
+        statusText: testRes.statusText,
+        timeMs: Date.now() - start,
+        contentType: testRes.headers.get('content-type'),
+      };
+    } catch (err: any) {
+      fetchTest = {
+        status: 'error',
+        message: err.message,
+        name: err.name,
+      };
+    }
+  }
+
   res.json({
     keys: Object.keys(process.env).filter(k => !k.startsWith('npm_') && !k.startsWith('VSCODE_')),
     nodeEnv: process.env.NODE_ENV,
@@ -188,6 +211,7 @@ app.get(['/api/debug-env', '/debug-env'], (req, res) => {
     hasOperatorPassword: !!process.env.OPERATOR_PASSWORD,
     hasGeminiApiKey: !!process.env.GEMINI_API_KEY,
     hasGoogleScriptUrl: !!process.env.GOOGLE_SCRIPT_URL,
+    googleScriptUrlTest: fetchTest,
   });
 });
 
