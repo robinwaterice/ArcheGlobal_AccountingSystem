@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 
@@ -13,7 +12,8 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
 // High-capacity JSON parsing for supporting larger base64 invoice images
 app.use(express.json({ limit: '15mb' }));
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const isVercel = !!process.env.VERCEL;
+const DATA_DIR = isVercel ? '/tmp' : path.join(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'records.json');
 
 // Ensure data directory and file exist
@@ -448,6 +448,7 @@ app.post('/api/ocr', async (req, res) => {
 // Configure Vite middleware for dev or Serve static client bundle in prod
 async function setupViteOrStaticAndListen() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'
@@ -474,4 +475,9 @@ async function setupViteOrStaticAndListen() {
   });
 }
 
-setupViteOrStaticAndListen();
+// 僅在非 Vercel 環境下執行監聽和設置開發伺服器
+if (!isVercel) {
+  setupViteOrStaticAndListen();
+}
+
+export default app;
