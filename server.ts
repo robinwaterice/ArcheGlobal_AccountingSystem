@@ -203,6 +203,34 @@ app.get(['/api/debug-env', '/debug-env'], async (req, res) => {
     }
   }
 
+  let geminiTest: any = { status: 'idle' };
+  if (!!process.env.GEMINI_API_KEY) {
+    try {
+      const start = Date.now();
+      const ai = getGeminiClient();
+      const testRes = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: 'Say "OK"'
+      });
+      geminiTest = {
+        status: 'success',
+        response: testRes.text ? testRes.text.trim() : null,
+        timeMs: Date.now() - start,
+      };
+    } catch (err: any) {
+      geminiTest = {
+        status: 'error',
+        message: err.message,
+        name: err.name,
+      };
+    }
+  } else {
+    geminiTest = {
+      status: 'error',
+      message: 'GEMINI_API_KEY environment variable is missing.'
+    };
+  }
+
   res.json({
     keys: Object.keys(process.env).filter(k => !k.startsWith('npm_') && !k.startsWith('VSCODE_')),
     nodeEnv: process.env.NODE_ENV,
@@ -212,6 +240,7 @@ app.get(['/api/debug-env', '/debug-env'], async (req, res) => {
     hasGeminiApiKey: !!process.env.GEMINI_API_KEY,
     hasGoogleScriptUrl: !!process.env.GOOGLE_SCRIPT_URL,
     googleScriptUrlTest: fetchTest,
+    geminiApiTest: geminiTest,
   });
 });
 
@@ -367,7 +396,12 @@ app.post(['/api/ocr', '/ocr'], async (req, res) => {
    - 簽核狀態（status）初始化規範：
      * 狀態一律預設為 "免簽核/待查閱"（配合目前公司不強制簽核、僅供內部溝通的彈性原則）。
    - 核准資訊初始化：
-     * approved_by（核准人）與 approved_at（核准時間）一律初始化為空字串 ""。`;
+     * approved_by（核准人）與 approved_at（核准時間）一律初始化為空字串 ""。
+8. 幣別與外幣折算：
+   - 辨識單據的原始幣別。如果原始幣別為台幣以外的幣別（例如 USD, JPY, EUR 等），請依據單據上的消費日期，估計/查詢當天的歷史匯率，將金額（amount_sales、amount_tax、amount_total）換算為新台幣（TWD）填入。
+   - 當發生外幣換算時：
+     * 輸出的 currency 欄位必須填寫 "TWD"（以確保系統儲存與顯示之金額單位一致為台幣）。
+     * 必須在 notes 欄位開頭或尾端，詳細註明外幣換算資訊，格式如：\`【外幣換算】原幣別: [原始幣別], 原總金額: [原始總金額], 參考匯率: [匯率], 換算為台幣: [換算後總金額] TWD。\`（若使用者有提供額外的說明，應將此段字樣附加在後方）。`;
 
     if (base64Image && mimeType) {
       parts.push({
