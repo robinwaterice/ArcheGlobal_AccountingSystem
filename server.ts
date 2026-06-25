@@ -9,6 +9,12 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
 
+// Helper to safely get environment variables without quotes or outer whitespace
+const getCleanEnvVar = (key: string): string => {
+  const val = process.env[key];
+  return val ? val.replace(/^["']|["']$/g, '').trim() : '';
+};
+
 // High-capacity JSON parsing for supporting larger base64 invoice images
 app.use(express.json({ limit: '15mb' }));
 
@@ -68,7 +74,7 @@ function writeRecords(records: any) {
 let aiInstance: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
   if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getCleanEnvVar('GEMINI_API_KEY');
     if (!apiKey) {
       throw new Error(
         'GEMINI_API_KEY 尚未設定，請在專案根目錄的 .env 檔案中設定您的金鑰。'
@@ -83,7 +89,7 @@ function getGeminiClient(): GoogleGenAI {
 
 // Helper function to sync record updates to Google Sheets via Apps Script Web App (Background Async)
 function syncToGoogleSheets(action: 'create' | 'update' | 'delete', record: any) {
-  const url = process.env.GOOGLE_SCRIPT_URL;
+  const url = getCleanEnvVar('GOOGLE_SCRIPT_URL');
   if (!url) return;
 
   // Execute asynchronously in the background so it doesn't block the API response
@@ -113,8 +119,7 @@ function syncToGoogleSheets(action: 'create' | 'update' | 'delete', record: any)
 // Middleware to check operator password for editing and deleting
 const checkOperatorPassword = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const clientPassword = req.headers['x-operation-password'];
-  // 去除可能的首尾引號與多餘空格防呆
-  const correctPassword = process.env.OPERATOR_PASSWORD ? process.env.OPERATOR_PASSWORD.replace(/^["']|["']$/g, '').trim() : undefined;
+  const correctPassword = getCleanEnvVar('OPERATOR_PASSWORD');
   
   if (!correctPassword) {
     return res.status(500).json({ error: '系統錯誤：後端環境變數 OPERATOR_PASSWORD 尚未設定。' });
@@ -131,8 +136,7 @@ const checkOperatorPassword = (req: express.Request, res: express.Response, next
 // Verify password API endpoint
 app.post('/api/verify-password', (req, res) => {
   const { password } = req.body;
-  // 去除可能的首尾引號與多餘空格防呆
-  const correctPassword = process.env.OPERATOR_PASSWORD ? process.env.OPERATOR_PASSWORD.replace(/^["']|["']$/g, '').trim() : undefined;
+  const correctPassword = getCleanEnvVar('OPERATOR_PASSWORD');
   if (!correctPassword) {
     return res.status(500).json({ success: false, error: '後端環境變數 OPERATOR_PASSWORD 尚未設定。' });
   }
@@ -146,8 +150,7 @@ app.post('/api/verify-password', (req, res) => {
 // Verify login password API endpoint
 app.post('/api/verify-login', (req, res) => {
   const { password } = req.body;
-  // 去除可能的首尾引號與多餘空格防呆
-  const correctPassword = process.env.LOGIN_PASSWORD ? process.env.LOGIN_PASSWORD.replace(/^["']|["']$/g, '').trim() : undefined;
+  const correctPassword = getCleanEnvVar('LOGIN_PASSWORD');
   if (!correctPassword) {
     return res.status(500).json({ success: false, error: '後端環境變數 LOGIN_PASSWORD 尚未設定。' });
   }
@@ -160,7 +163,7 @@ app.post('/api/verify-login', (req, res) => {
 
 // Load all accounting records
 app.get('/api/records', async (req, res) => {
-  const url = process.env.GOOGLE_SCRIPT_URL;
+  const url = getCleanEnvVar('GOOGLE_SCRIPT_URL');
   let records = readRecords();
 
   if (url) {
