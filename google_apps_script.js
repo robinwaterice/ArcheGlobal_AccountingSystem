@@ -90,12 +90,25 @@ function doPost(e) {
     // 根據消費日期推算目標民國年月份分頁名稱 (例如: 115年06月)
     var targetSheetName = getMinguoYearMonth(record.date);
 
+    // 檢查是否有 base64 格式的圖片需要上傳到 Google Drive
+    if (record.imageUrl && record.imageUrl.indexOf('data:image/') === 0) {
+      try {
+        var driveUrl = uploadBase64ToDrive(record.imageUrl, record.id || ('img_' + new Date().getTime()));
+        if (driveUrl) {
+          record.imageUrl = driveUrl;
+        }
+      } catch (uploadErr) {
+        // 僅記錄錯誤，不要阻斷整筆資料寫入
+        console.error('上傳圖片至 Drive 失敗: ' + uploadErr.toString());
+      }
+    }
+
     if (action === 'create') {
       var sheet = getOrCreateSheet(ss, targetSheetName);
       var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
       var rowData = mapRecordToRow(record, headers);
       sheet.appendRow(rowData);
-      return ContentService.createTextOutput(JSON.stringify({ success: true }))
+      return ContentService.createTextOutput(JSON.stringify({ success: true, record: record }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -134,7 +147,7 @@ function doPost(e) {
           var rowData = mapRecordToRow(record, foundHeaders);
           foundSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
         }
-        return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        return ContentService.createTextOutput(JSON.stringify({ success: true, record: record }))
           .setMimeType(ContentService.MimeType.JSON);
       }
 
@@ -144,7 +157,7 @@ function doPost(e) {
         var newHeaders = newSheet.getRange(1, 1, 1, newSheet.getLastColumn()).getValues()[0];
         var rowData = mapRecordToRow(record, newHeaders);
         newSheet.appendRow(rowData);
-        return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        return ContentService.createTextOutput(JSON.stringify({ success: true, record: record }))
           .setMimeType(ContentService.MimeType.JSON);
       }
 
@@ -210,4 +223,72 @@ function getMinguoYearMonth(dateStr) {
     }
   }
   return '未分類';
+}
+
+// 將 Base64 格式的憑證影像解碼，並上傳到 Google 雲端硬碟的特定資料夾中
+function uploadBase64ToDrive(dataUrl, fileNamePrefix) {
+  // dataUrl 格式預期為 "data:image/png;base64,iVBORw0KG..." 或 "data:image/jpeg;base64,..."
+  var parts = dataUrl.split(',');
+  if (parts.length < 2) return null;
+
+  var meta = parts[0];
+  var base64Data = parts[1];
+
+  // 取得 Mime Type
+  var mimeType = 'image/png';
+  var matches = meta.match(/data:(.*?);/);
+  if (matches && matches.length > 1) {
+    mimeType = matches[1];
+  }
+
+  // 決定對應的副檔名
+  var ext = 'png';
+  if (mimeType.indexOf('jpeg') !== -1 || mimeType.indexOf('jpg') !== -1) {
+    ext = 'jpg';
+  } else if (mimeType.indexOf('gif') !== -1) {
+    ext = 'gif';
+  } else if (mimeType.indexOf('webp') !== -1) {
+    ext = 'webp';
+  }
+
+  // 解碼 Base64
+  var decoded = Utilities.base64Decode(base64Data);
+  var blob = Utilities.newBlob(decoded, mimeType, fileNamePrefix + '.' + ext);
+
+  // 尋找或建立儲存圖片的「發票憑證照片」資料夾，預設建立在試算表所在資料夾
+  var folder = null;
+  try {
+    var ssId = SpreadsheetApp.getActiveSpreadsheet().getId();
+    var ssFile = DriveApp.getFileById(ssId);
+    var parents = ssFile.getParents();
+    if (parents.hasNext()) {
+      var parentFolder = parents.next();
+      var folders = parentFolder.getFoldersByName('發票憑證照片');
+      if (folders.hasNext()) {
+        folder = folders.next();
+      } else {
+        folder = parentFolder.createFolder('發票憑證照片');
+      }
+    }
+  } catch (e) {
+    // 找不到父資料夾時的降級處理
+  }
+
+  if (!folder) {
+    var folders = DriveApp.getFoldersByName('發票憑證照片');
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      folder = DriveApp.createFolder('發票憑證照片');
+    }
+  }
+
+  // 建立檔案並寫入雲端硬碟
+  var file = folder.createFile(blob);
+
+  // 開啟權限為「任何知道連結的人皆可檢視」，以供前端網頁順利下載與顯示
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  // 回傳直連檢視與下載格式 URL
+  return 'https://drive.google.com/uc?export=view&id=' + file.getId();
 }

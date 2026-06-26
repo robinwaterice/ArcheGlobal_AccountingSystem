@@ -495,7 +495,7 @@ export default function App() {
         setFormStatus(parsed.status || '免簽核/待查閱');
         setFormApprovedBy(parsed.approved_by || '');
         setFormApprovedAt(parsed.approved_at || '');
-        setFormImageUrl(base64Img); // Retain image for saving
+        setFormImageUrl(`data:${mimeType};base64,${base64Img}`); // Retain image for saving
         
         setOcrSuccessMsg('🎉 AI 雙效視覺辨識成功！請核對後方自動填單，無誤即可儲存入資料庫。');
         

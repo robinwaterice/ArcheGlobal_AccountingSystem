@@ -124,6 +124,16 @@ function syncToGoogleSheets(action: 'create' | 'update' | 'delete', record: any)
       const result = await response.json();
       if (result.success) {
         console.log(`[Google Sheets 同步] 同步成功 (${action})`);
+        // 若 Apps Script 回傳了已更新（上傳至雲端硬碟後）的 record 資料，同步更新本機快取
+        if (result.record && result.record.imageUrl) {
+          const records = readRecords();
+          const idx = records.findIndex((r: any) => r.id === record.id);
+          if (idx !== -1) {
+            records[idx] = { ...records[idx], imageUrl: result.record.imageUrl };
+            writeRecords(records);
+            console.log(`[Google Sheets 同步] 已更新本機快取的憑證圖片連結為 Google Drive 網址: ${result.record.imageUrl}`);
+          }
+        }
       } else {
         console.error(`[Google Sheets 同步] 同步失敗: ${result.error}`);
       }
