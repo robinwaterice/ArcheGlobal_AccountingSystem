@@ -56,6 +56,7 @@ export default function App() {
   const [uploadedImageMimeType, setUploadedImageMimeType] = useState<string | null>(null);
   const [ocrLoading, setOcrLoading] = useState<boolean>(false);
   const [ocrSuccessMsg, setOcrSuccessMsg] = useState<string | null>(null);
+  const [saveLoading, setSaveLoading] = useState<boolean>(false);
 
   // Standard Form State
   const [formDate, setFormDate] = useState<string>('');
@@ -227,6 +228,8 @@ export default function App() {
   const handleSaveRecord = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (saveLoading) return;
+
     if (!formRecordedBy || !formRecordedBy.trim()) {
       alert('⚠️ 請填寫「登錄人」欄位才可儲存！');
       return;
@@ -263,6 +266,7 @@ export default function App() {
       recorded_by: formRecordedBy.trim(),
     };
 
+    setSaveLoading(true);
     try {
       if (editingRecordId) {
         // Update API
@@ -291,6 +295,8 @@ export default function App() {
       setShowFormModal(false);
     } catch (err: any) {
       alert(err.message || '儲存失敗，請重試');
+    } finally {
+      setSaveLoading(false);
     }
   };
 
@@ -413,12 +419,15 @@ export default function App() {
     e.stopPropagation();
     setDragActive(false);
 
+    if (ocrLoading) return;
+
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       processUploadedFile(e.dataTransfer.files[0]);
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (ocrLoading) return;
     if (e.target.files && e.target.files[0]) {
       processUploadedFile(e.target.files[0]);
     }
@@ -442,8 +451,14 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || 'Gemini 智能辨識連線失敗');
+        let errMsg = 'Gemini 智能辨識連線失敗';
+        try {
+          const errorData = await res.json();
+          errMsg = errorData.message || errorData.error || errMsg;
+        } catch (e) {
+          errMsg = `伺服器連線失敗 (HTTP ${res.status}): ${res.statusText || '無伺服器回應'}`;
+        }
+        throw new Error(errMsg);
       }
 
       const responseData = await res.json();
@@ -487,11 +502,30 @@ export default function App() {
         // Open form modal automatically to show results
         setShowFormModal(true);
       } else {
-        throw new Error('解析結果不符合預期資料格式');
+        throw new Error(responseData.message || '解析結果不符合預期資料格式');
       }
     } catch (err: any) {
       console.error(err);
-      alert(`⚠️ 辨識失敗：${err.message || '不詳原因'}\n您可以手動填寫單據或配置正確的 API 金鑰。`);
+      const errorMsg = String(err.message || '');
+      let friendlyMsg = '無法辨識該憑證，請確認照片清晰度並嘗試重新上傳。';
+
+      if (errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('quota') || errorMsg.includes('429')) {
+        friendlyMsg = 'AI 目前辨識量較大（額度已滿或請求過於頻繁），請稍候再試。';
+      } else if (errorMsg.includes('overloaded') || errorMsg.includes('503') || errorMsg.includes('UNAVAILABLE') || errorMsg.includes('busy')) {
+        friendlyMsg = 'AI 忙線中，請稍後再試。';
+      } else if (errorMsg.includes('API_KEY') || errorMsg.includes('API key') || errorMsg.includes('金鑰')) {
+        friendlyMsg = '系統 AI 金鑰設定失效，請聯絡系統管理員設定。';
+      } else if (errorMsg.includes('413') || errorMsg.includes('large') || errorMsg.includes('limit')) {
+        friendlyMsg = '上傳的圖片檔案過大，請壓縮圖片後重新嘗試。';
+      } else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('TypeError') || errorMsg.includes('連線失敗') || errorMsg.includes('502') || errorMsg.includes('504')) {
+        friendlyMsg = '網路連線或伺服器異常，請檢查網路後重試。';
+      } else if (errorMsg.includes('格式') || errorMsg.includes('json') || errorMsg.includes('parsed') || errorMsg.includes('Unexpected token')) {
+        friendlyMsg = '解析發票憑證失敗，請嘗試手動輸入欄位內容。';
+      } else if (errorMsg) {
+        friendlyMsg = `${errorMsg}（請稍後再試或嘗試手動輸入）`;
+      }
+
+      alert(`⚠️ 辨識失敗：${friendlyMsg}`);
     } finally {
       setOcrLoading(false);
     }
@@ -2094,8 +2128,9 @@ export default function App() {
                 </div>
               </div>
               <button
+                disabled={saveLoading}
                 onClick={() => setShowFormModal(false)}
-                className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${isDark ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'}`}
+                className={`p-1 px-1.5 rounded transition-colors cursor-pointer ${saveLoading ? 'opacity-50 cursor-not-allowed' : ''} ${isDark ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'}`}
               >
                 <X className="h-5 w-5" />
               </button>
@@ -2524,16 +2559,18 @@ export default function App() {
               <div className={`pt-4 border-t flex justify-end gap-3 select-none ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
                 <button
                   type="button"
+                  disabled={saveLoading}
                   onClick={() => setShowFormModal(false)}
-                  className={`px-5 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 shadow-sm'}`}
+                  className={`px-5 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${saveLoading ? 'opacity-50 cursor-not-allowed' : ''} ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 shadow-sm'}`}
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  className="bg-cyan-500 hover:bg-cyan-400 active:bg-cyan-600 text-slate-950 px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-md shadow-cyan-500/10 cursor-pointer"
+                  disabled={saveLoading}
+                  className={`bg-cyan-500 hover:bg-cyan-400 active:bg-cyan-600 text-slate-950 px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-md shadow-cyan-500/10 cursor-pointer ${saveLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  確認傳票登載存檔
+                  {saveLoading ? '儲存中...' : '確認傳票登載存檔'}
                 </button>
               </div>
 
