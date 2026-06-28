@@ -411,7 +411,8 @@ app.post(['/api/ocr', '/ocr'], async (req, res) => {
    - 辨識單據的原始幣別。如果原始幣別為台幣以外的幣別（例如 USD, JPY, EUR 等），請依據單據上的消費日期，估計/查詢當天的歷史匯率，將金額（amount_sales、amount_tax、amount_total）換算為新台幣（TWD）填入。
    - 當發生外幣換算時：
      * 輸出的 currency 欄位必須填寫 "TWD"（以確保系統儲存與顯示之金額單位一致為台幣）。
-     * 必須在 notes 欄位開頭或尾端，詳細註明外幣換算資訊，格式如：\`【外幣換算】原幣別: [原始幣別], 原總金額: [原始總金額], 參考匯率: [匯率], 換算為台幣: [換算後總金額] TWD。\`（若使用者有提供額外的說明，應將此段字樣附加在後方）。`;
+     * 換算成台幣後，若金額有小數點，請直接「無條件進位」（取整數，例如 100.1 或 100.9 皆進位為 101），輸出結果中絕對不可出現任何小數點。同時，必須確保：amount_sales + amount_tax = amount_total 的數學一致性。
+     * 必須在 notes 欄位開頭或尾端，詳細註明外幣換算資訊，格式如：\`【外幣換算】原幣別: [原始幣別], 原總金額: [原始總金額], 參考匯率: [匯率], 換算為台幣: [換算後總金額] TWD。\`（換算後總金額亦必須為無條件進位後的整數，若使用者有提供額外的說明，應將此段字樣附加在後方）。`;
 
     if (base64Image && mimeType) {
       parts.push({
@@ -538,6 +539,24 @@ app.post(['/api/ocr', '/ocr'], async (req, res) => {
     }
 
     const parsedJson = JSON.parse(text);
+
+    // 強制將金額進行無條件進位 (Math.ceil) 至整數，避免小數點，並確保符合 amount_sales + amount_tax = amount_total
+    if (parsedJson) {
+      if (parsedJson.amount_total !== undefined) {
+        parsedJson.amount_total = Math.ceil(Number(parsedJson.amount_total) || 0);
+      }
+      if (parsedJson.amount_sales !== undefined) {
+        parsedJson.amount_sales = Math.ceil(Number(parsedJson.amount_sales) || 0);
+      }
+      if (parsedJson.amount_tax !== undefined) {
+        const computedTax = parsedJson.amount_total - parsedJson.amount_sales;
+        parsedJson.amount_tax = computedTax > 0 ? computedTax : 0;
+        if (computedTax < 0) {
+          parsedJson.amount_sales = parsedJson.amount_total;
+        }
+      }
+    }
+
     res.json({ success: true, result: parsedJson });
   } catch (error: any) {
     console.error('OCR analysis error:', error);
