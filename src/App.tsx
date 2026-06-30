@@ -151,11 +151,12 @@ export default function App() {
   };
 
   // Load all records on boot
-  const fetchRecords = async () => {
+  const fetchRecords = async (forceRefresh = false) => {
     setLoading(true);
     setApiError(null);
     try {
-      const res = await fetch('/api/records');
+      const url = forceRefresh ? '/api/records?refresh=true' : '/api/records';
+      const res = await fetch(url);
       if (!res.ok) throw new Error('無法串接後端憑證資料庫');
       const data = await res.json();
       setRecords(data.records || []);
@@ -1069,6 +1070,20 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={() => fetchRecords(true)}
+                disabled={loading}
+                className={`px-3 py-1 text-xs rounded-lg font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isDark 
+                    ? 'bg-slate-900 hover:bg-slate-800 border border-slate-850 text-cyan-400 hover:text-cyan-300' 
+                    : 'bg-white hover:bg-slate-100 border border-slate-200 text-cyan-750 hover:text-cyan-800 shadow-sm'
+                } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title="強制從雲端 Google Sheets 獲取最新對帳資料"
+              >
+                <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+                <span>同步更新</span>
+              </button>
+
               <button
                 onClick={() => setSelectedMonth('all')}
                 className={`px-3 py-1 text-xs rounded-lg font-medium transition-all cursor-pointer ${

@@ -40,6 +40,9 @@ var FIELD_MAP = [
 
 // 將中文標頭轉換回英文 Key，確保回傳給網頁的 JSON 欄位名稱正確
 function getHeaderKeys(headers) {
+  if (!headers || !headers.map) {
+    return [];
+  }
   return headers.map(function (headerName) {
     for (var i = 0; i < FIELD_MAP.length; i++) {
       if (FIELD_MAP[i].name === headerName || FIELD_MAP[i].key === headerName) {
@@ -87,19 +90,35 @@ function doPost(e) {
     var record = payload.record;
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
+    if (action === 'migrate') {
+      convertSheetImagesToDrive();
+      return ContentService.createTextOutput(JSON.stringify({ success: true, message: '試算表照片批次轉存雲端硬碟完成！' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // 根據消費日期推算目標民國年月份分頁名稱 (例如: 115年06月)
     var targetSheetName = getMinguoYearMonth(record.date);
 
-    // 檢查是否有 base64 格式的圖片需要上傳到 Google Drive
-    if (record.imageUrl && record.imageUrl.indexOf('data:image/') === 0) {
+    // 檢查是否有 base64 格式的圖片需要上傳到 Google Drive (支援有前綴與無前綴格式)
+    var isBase64 = record.imageUrl && (
+      record.imageUrl.indexOf('data:image/') === 0 ||
+      record.imageUrl.indexOf('/9j/') === 0 ||
+      record.imageUrl.indexOf('iVBORw0KG') === 0
+    );
+
+    if (isBase64) {
       try {
-        var driveUrl = uploadBase64ToDrive(record.imageUrl, record.id || ('img_' + new Date().getTime()));
+        var driveUrl = uploadBase64ToDrive(record.imageUrl, record.id || ('img_' + new Date().getTime()), targetSheetName);
         if (driveUrl) {
           record.imageUrl = driveUrl;
+        } else {
+          throw new Error('uploadBase64ToDrive 傳回空網址');
         }
       } catch (uploadErr) {
-        // 僅記錄錯誤，不要阻斷整筆資料寫入
-        console.error('上傳圖片至 Drive 失敗: ' + uploadErr.toString());
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false,
+          error: '圖片上傳至雲端硬碟失敗，請確認 Apps Script 已授權 DriveApp。錯誤細節: ' + uploadErr.toString()
+        })).setMimeType(ContentService.MimeType.JSON);
       }
     }
 
@@ -226,8 +245,19 @@ function getMinguoYearMonth(dateStr) {
 }
 
 // 將 Base64 格式的憑證影像解碼，並上傳到 Google 雲端硬碟的特定資料夾中
-function uploadBase64ToDrive(dataUrl, fileNamePrefix) {
+function uploadBase64ToDrive(dataUrl, fileNamePrefix, monthFolderName) {
   // dataUrl 格式預期為 "data:image/png;base64,iVBORw0KG..." 或 "data:image/jpeg;base64,..."
+  // 若為無前綴的純 Base64 字串，則根據字元特徵自動補上前綴
+  if (dataUrl.indexOf('data:') !== 0) {
+    if (dataUrl.indexOf('/9j/') === 0) {
+      dataUrl = 'data:image/jpeg;base64,' + dataUrl;
+    } else if (dataUrl.indexOf('iVBORw0KG') === 0) {
+      dataUrl = 'data:image/png;base64,' + dataUrl;
+    } else {
+      dataUrl = 'data:image/jpeg;base64,' + dataUrl; // 預設為 jpeg
+    }
+  }
+
   var parts = dataUrl.split(',');
   if (parts.length < 2) return null;
 
@@ -256,32 +286,10 @@ function uploadBase64ToDrive(dataUrl, fileNamePrefix) {
   var blob = Utilities.newBlob(decoded, mimeType, fileNamePrefix + '.' + ext);
 
   // 尋找或建立儲存圖片的「發票憑證照片」資料夾，預設建立在試算表所在資料夾
-  var folder = null;
-  try {
-    var ssId = SpreadsheetApp.getActiveSpreadsheet().getId();
-    var ssFile = DriveApp.getFileById(ssId);
-    var parents = ssFile.getParents();
-    if (parents.hasNext()) {
-      var parentFolder = parents.next();
-      var folders = parentFolder.getFoldersByName('發票憑證照片');
-      if (folders.hasNext()) {
-        folder = folders.next();
-      } else {
-        folder = parentFolder.createFolder('發票憑證照片');
-      }
-    }
-  } catch (e) {
-    // 找不到父資料夾時的降級處理
-  }
-
-  if (!folder) {
-    var folders = DriveApp.getFoldersByName('發票憑證照片');
-    if (folders.hasNext()) {
-      folder = folders.next();
-    } else {
-      folder = DriveApp.createFolder('發票憑證照片');
-    }
-  }
+  var parentFolder = getOrCreateImageFolder();
+  if (!parentFolder) return null;
+  var folder = getOrCreateSubFolder(parentFolder, monthFolderName);
+  if (!folder) return null;
 
   // 建立檔案並寫入雲端硬碟
   var file = folder.createFile(blob);
@@ -292,3 +300,262 @@ function uploadBase64ToDrive(dataUrl, fileNamePrefix) {
   // 回傳直連檢視與下載格式 URL
   return 'https://drive.google.com/uc?export=view&id=' + file.getId();
 }
+
+// 尋找或建立儲存圖片的「發票憑證照片」資料夾，預設建立在試算表所在資料夾
+function getOrCreateImageFolder() {
+  var folderName = '發票憑證照片';
+  var folder = null;
+  var errors = [];
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (ss) {
+      var ssId = ss.getId();
+      var ssFile = DriveApp.getFileById(ssId);
+      var parents = ssFile.getParents();
+      if (parents.hasNext()) {
+        var parentFolder = parents.next();
+        var folders = parentFolder.getFoldersByName(folderName);
+        if (folders.hasNext()) {
+          folder = folders.next();
+        } else {
+          folder = parentFolder.createFolder(folderName);
+        }
+      }
+    }
+  } catch (e) {
+    errors.push("同層查找失敗: " + e.toString());
+  }
+
+  if (!folder) {
+    try {
+      var folders = DriveApp.getFoldersByName(folderName);
+      if (folders.hasNext()) {
+        folder = folders.next();
+      } else {
+        folder = DriveApp.createFolder(folderName);
+      }
+    } catch (e) {
+      errors.push("根目錄建立失敗: " + e.toString());
+    }
+  }
+
+  if (!folder) {
+    throw new Error("無法建立或取得雲端資料夾。詳細錯誤: " + errors.join(" | "));
+  }
+  return folder;
+}
+
+// 取得或建立雲端硬碟月份子資料夾
+function getOrCreateSubFolder(parentFolder, subFolderName) {
+  if (!parentFolder) return null;
+  if (!subFolderName) return parentFolder;
+  var folders = parentFolder.getFoldersByName(subFolderName);
+  if (folders.hasNext()) {
+    return folders.next();
+  } else {
+    var subFolder = parentFolder.createFolder(subFolderName);
+    // 開啟子資料夾共用權限為「任何知道連結的人皆可檢視」
+    subFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return subFolder;
+  }
+}
+
+// 從 Google Drive 連結中擷取檔案 ID
+function extractFileIdFromUrl(url) {
+  var match = url.match(/id=([^&]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  var matchPath = url.match(/\/file\/d\/([^/]+)/);
+  if (matchPath && matchPath[1]) {
+    return matchPath[1];
+  }
+  return null;
+}
+
+// 掃描並轉換工作表中現有的發票照片為雲端硬碟檔案
+function convertSheetImagesToDrive() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = ss.getSheets();
+  var folder = getOrCreateImageFolder();
+  if (!folder) {
+    SpreadsheetApp.getUi().alert("錯誤：無法建立或取得 '發票憑證照片' 資料夾，請確認已授權雲端硬碟權限。");
+    return;
+  }
+
+  var processedCount = 0;
+  var successCount = 0;
+  var failCount = 0;
+
+  for (var k = 0; k < sheets.length; k++) {
+    var sheet = sheets[k];
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) continue;
+
+    var headers = data[0];
+    var keys = getHeaderKeys(headers);
+
+    // 尋找「憑證照片連結」或「imageUrl」欄位的索引
+    var imgColIndex = keys.indexOf('imageUrl');
+    if (imgColIndex === -1) {
+      for (var col = 0; col < headers.length; col++) {
+        if (headers[col] === '憑證照片連結' || headers[col] === 'imageUrl') {
+          imgColIndex = col;
+          break;
+        }
+      }
+    }
+    if (imgColIndex === -1) continue; // 如果該工作表沒有圖片欄位，跳過
+
+    // 尋找「傳票ID」或「id」欄位索引，用於命名圖片檔案
+    var idColIndex = keys.indexOf('id');
+    if (idColIndex === -1) {
+      for (var col = 0; col < headers.length; col++) {
+        if (headers[col] === '傳票ID' || headers[col] === 'id') {
+          idColIndex = col;
+          break;
+        }
+      }
+    }
+
+    for (var row = 1; row < data.length; row++) {
+      var cell = sheet.getRange(row + 1, imgColIndex + 1);
+      var cellValue = cell.getValue();
+      var cellFormula = cell.getFormula();
+
+      var targetUrl = null;
+      var isBase64 = false;
+      var isUrl = false;
+
+      var idVal = idColIndex !== -1 ? String(data[row][idColIndex]).trim() : '';
+      if (!idVal) {
+        idVal = 'row_' + (row + 1) + '_' + new Date().getTime();
+      }
+
+      // 檢查是否為 =IMAGE("url") 函數
+      if (cellFormula && cellFormula.toUpperCase().indexOf('=IMAGE') === 0) {
+        var match = cellFormula.match(/=IMAGE\(\s*["']([^"']+)["']/i);
+        if (match && match[1]) {
+          targetUrl = match[1];
+          // 若已經是 Google Drive 的連結，跳過不重複上傳
+          if (targetUrl.indexOf('drive.google.com') === -1 && targetUrl.indexOf('google.com') === -1) {
+            isUrl = true;
+          }
+        }
+      } else if (cellValue && typeof cellValue === 'string') {
+        cellValue = cellValue.trim();
+        // 檢查是否為 Base64 格式
+        if (cellValue.indexOf('data:image/') === 0 || cellValue.indexOf('/9j/') === 0 || cellValue.indexOf('iVBORw0KG') === 0) {
+          isBase64 = true;
+        } else if (cellValue.indexOf('http://') === 0 || cellValue.indexOf('https://') === 0) {
+          // 檢查是否已是 Google Drive 連結
+          if (cellValue.indexOf('drive.google.com') !== -1) {
+            // 這是已經轉存的 Google Drive 連結，將其移動至對應的月份資料夾
+            var fileId = extractFileIdFromUrl(cellValue);
+            if (fileId) {
+              try {
+                var file = DriveApp.getFileById(fileId);
+                var targetFolder = getOrCreateSubFolder(folder, sheet.getName());
+                var parents = file.getParents();
+                var alreadyInSubfolder = false;
+                while (parents.hasNext()) {
+                  var p = parents.next();
+                  if (p.getId() === targetFolder.getId()) {
+                    alreadyInSubfolder = true;
+                    break;
+                  }
+                }
+                if (!alreadyInSubfolder) {
+                  file.moveTo(targetFolder);
+                  processedCount++;
+                  successCount++;
+                }
+              } catch (moveErr) {
+                Logger.log("移動檔案失敗：" + moveErr.toString() + "，連結：" + cellValue);
+              }
+            }
+          } else if (cellValue.indexOf('google.com') === -1) {
+            targetUrl = cellValue;
+            isUrl = true;
+          }
+        }
+      }
+
+      if (isUrl && targetUrl) {
+        try {
+          processedCount++;
+          var response = UrlFetchApp.fetch(targetUrl, { muteHttpExceptions: true });
+          if (response.getResponseCode() === 200) {
+            var blob = response.getBlob();
+            var contentType = blob.getContentType();
+            var ext = 'png';
+            if (contentType.indexOf('jpeg') !== -1 || contentType.indexOf('jpg') !== -1) {
+              ext = 'jpg';
+            } else if (contentType.indexOf('gif') !== -1) {
+              ext = 'gif';
+            } else if (contentType.indexOf('webp') !== -1) {
+              ext = 'webp';
+            }
+
+            blob.setName(idVal + '.' + ext);
+            var targetFolder = getOrCreateSubFolder(folder, sheet.getName());
+            var file = targetFolder.createFile(blob);
+            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+            var newUrl = 'https://drive.google.com/uc?export=view&id=' + file.getId();
+            cell.setValue(newUrl);
+            successCount++;
+          } else {
+            failCount++;
+            Logger.log("下載圖片失敗，HTTP 狀態碼：" + response.getResponseCode() + "，網址：" + targetUrl);
+          }
+        } catch (urlErr) {
+          failCount++;
+          Logger.log("下載圖片出錯：" + urlErr.toString() + "，網址：" + targetUrl);
+        }
+      } else if (isBase64) {
+        try {
+          processedCount++;
+          var newUrl = uploadBase64ToDrive(cellValue, idVal, sheet.getName());
+          if (newUrl) {
+            cell.setValue(newUrl);
+            successCount++;
+          } else {
+            failCount++;
+            Logger.log("Base64 圖片上傳失敗，傳票 ID：" + idVal);
+          }
+        } catch (b64Err) {
+          failCount++;
+          Logger.log("Base64 圖片上傳出錯：" + b64Err.toString() + "，傳票 ID：" + idVal);
+        }
+      }
+    }
+  }
+
+  try {
+    var ui = SpreadsheetApp.getUi();
+    if (ui) {
+      ui.alert("轉換完成！\n總共處理：" + processedCount + " 筆\n成功上傳：" + successCount + " 筆\n失敗：" + failCount + " 筆\n詳情請參閱 Apps Script 執行日誌。");
+    }
+  } catch (e) {
+    Logger.log("無 UI 界面，已略過顯示對話框。");
+  }
+}
+
+// ⚠️ 測試用：強制觸發雲端硬碟 (Google Drive) 授權視窗
+// 請在編輯器上方選擇執行 testDriveAuth 函式
+function testDriveAuth() {
+  var folder = DriveApp.getRootFolder();
+  Logger.log("雲端硬碟根目錄名稱: " + folder.getName());
+  Logger.log("恭喜！雲端硬碟權限授權成功！");
+}
+
+// 當試算表開啟時，自動建立自訂選單
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('記帳與單據系統')
+    .addItem('將試算表照片轉存至雲端硬碟', 'convertSheetImagesToDrive')
+    .addItem('授權雲端硬碟測試', 'testDriveAuth')
+    .addToUi();
+}
+

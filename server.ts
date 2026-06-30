@@ -254,12 +254,24 @@ app.get(['/api/debug-env', '/debug-env'], async (req, res) => {
   });
 });
 
+// Smart cache variables for Google Sheets fetch throttling
+let lastFetchTime = 0;
+const CACHE_TTL = 15000; // 15 seconds
+
 // Load all accounting records
 app.get(['/api/records', '/records'], async (req, res) => {
   const url = getCleanEnvVar('GOOGLE_SCRIPT_URL');
+  const forceRefresh = req.query.refresh === 'true';
   let records = readRecords();
 
-  if (url) {
+  const shouldFetch = url && (
+    forceRefresh || 
+    lastFetchTime === 0 || 
+    (Date.now() - lastFetchTime > CACHE_TTL) || 
+    records.length === 0
+  );
+
+  if (shouldFetch) {
     try {
       console.log('正在從 Google Sheets 獲取最新資料...');
       const response = await fetch(url);
@@ -289,6 +301,7 @@ app.get(['/api/records', '/records'], async (req, res) => {
             recorded_by: String(r.recorded_by || '')
           }));
           writeRecords(records);
+          lastFetchTime = Date.now(); // Update last successful fetch timestamp
           console.log('已成功從 Google Sheets 同步並更新本地快取！');
         }
       } else {
@@ -297,6 +310,8 @@ app.get(['/api/records', '/records'], async (req, res) => {
     } catch (error: any) {
       console.error('從 Google Sheets 獲取資料發生連線錯誤，使用本地快取：', error.message || error);
     }
+  } else {
+    console.log(`[Cache Hit] 直接從本地快取回傳資料 (距離上一次獲取：${Math.round((Date.now() - lastFetchTime) / 1000)}秒，快取限制：${CACHE_TTL/1000}秒)`);
   }
 
   res.json({ records, yuanqiVatId: YUANQI_VAT_ID });
@@ -316,6 +331,7 @@ app.post(['/api/records', '/records'], (req, res) => {
   };
   records.push(newRecord);
   writeRecords(records);
+  lastFetchTime = Date.now(); // Set fetch time to now to prevent immediate stale get requests
   
   // Trigger async sync to Google Sheets
   syncToGoogleSheets('create', newRecord);
@@ -338,6 +354,7 @@ app.put(['/api/records/:id', '/records/:id'], checkOperatorPassword, (req, res) 
     };
     records[index] = { ...records[index], ...updatedRecord };
     writeRecords(records);
+    lastFetchTime = Date.now(); // Set fetch time to now to prevent immediate stale get requests
 
     // Trigger async sync to Google Sheets
     syncToGoogleSheets('update', records[index]);
@@ -356,6 +373,7 @@ app.delete(['/api/records/:id', '/records/:id'], checkOperatorPassword, (req, re
   const updatedRecords = records.filter((r: any) => r.id !== id);
   if (records.length !== updatedRecords.length) {
     writeRecords(updatedRecords);
+    lastFetchTime = Date.now(); // Set fetch time to now to prevent immediate stale get requests
 
     // Trigger async sync to Google Sheets
     if (targetRecord) {
