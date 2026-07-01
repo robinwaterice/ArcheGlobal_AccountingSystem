@@ -297,8 +297,8 @@ function uploadBase64ToDrive(dataUrl, fileNamePrefix, monthFolderName) {
   // 開啟權限為「任何知道連結的人皆可檢視」，以供前端網頁順利下載與顯示
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-  // 回傳直連檢視與下載格式 URL
-  return 'https://drive.google.com/uc?export=view&id=' + file.getId();
+  // 回傳直連檢視與下載格式 URL (使用 lh3.googleusercontent.com 支援直連顯示)
+  return 'https://lh3.googleusercontent.com/d/' + file.getId();
 }
 
 // 尋找或建立儲存圖片的「發票憑證照片」資料夾，預設建立在試算表所在資料夾
@@ -370,6 +370,10 @@ function extractFileIdFromUrl(url) {
   if (matchPath && matchPath[1]) {
     return matchPath[1];
   }
+  var matchLh3 = url.match(/\/d\/([^/]+)/);
+  if (matchLh3 && matchLh3[1]) {
+    return matchLh3[1];
+  }
   return null;
 }
 
@@ -438,7 +442,7 @@ function convertSheetImagesToDrive() {
         if (match && match[1]) {
           targetUrl = match[1];
           // 若已經是 Google Drive 的連結，跳過不重複上傳
-          if (targetUrl.indexOf('drive.google.com') === -1 && targetUrl.indexOf('google.com') === -1) {
+          if (targetUrl.indexOf('drive.google.com') === -1 && targetUrl.indexOf('google.com') === -1 && targetUrl.indexOf('googleusercontent.com') === -1) {
             isUrl = true;
           }
         }
@@ -449,7 +453,7 @@ function convertSheetImagesToDrive() {
           isBase64 = true;
         } else if (cellValue.indexOf('http://') === 0 || cellValue.indexOf('https://') === 0) {
           // 檢查是否已是 Google Drive 連結
-          if (cellValue.indexOf('drive.google.com') !== -1) {
+          if (cellValue.indexOf('drive.google.com') !== -1 || cellValue.indexOf('googleusercontent.com') !== -1) {
             // 這是已經轉存的 Google Drive 連結，將其移動至對應的月份資料夾
             var fileId = extractFileIdFromUrl(cellValue);
             if (fileId) {
@@ -502,7 +506,7 @@ function convertSheetImagesToDrive() {
             var file = targetFolder.createFile(blob);
             file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-            var newUrl = 'https://drive.google.com/uc?export=view&id=' + file.getId();
+            var newUrl = 'https://lh3.googleusercontent.com/d/' + file.getId();
             cell.setValue(newUrl);
             successCount++;
           } else {

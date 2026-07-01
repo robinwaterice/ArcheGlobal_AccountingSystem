@@ -27,6 +27,32 @@ import {
 } from 'lucide-react';
 import { AccountingRecord, ExpenseCategory, BillingType, ApprovalStatus } from './types';
 
+// Helper to transform Google Drive viewer URL to direct image URL using lh3.googleusercontent.com
+function getDirectDriveImageUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  if (url.includes('drive.google.com') || url.includes('googleusercontent.com')) {
+    let fileId = '';
+    const idMatch = url.match(/[?&]id=([^&]+)/);
+    if (idMatch && idMatch[1]) {
+      fileId = idMatch[1];
+    } else {
+      const pathMatch = url.match(/\/file\/d\/([^/]+)/);
+      if (pathMatch && pathMatch[1]) {
+        fileId = pathMatch[1];
+      } else {
+        const lh3Match = url.match(/\/d\/([^/]+)/);
+        if (lh3Match && lh3Match[1]) {
+          fileId = lh3Match[1];
+        }
+      }
+    }
+    if (fileId) {
+      return `https://lh3.googleusercontent.com/d/${fileId}`;
+    }
+  }
+  return url;
+}
+
 export default function App() {
   // Records state
   const [records, setRecords] = useState<AccountingRecord[]>([]);
@@ -2518,7 +2544,7 @@ export default function App() {
                 {formImageUrl ? (
                   <div className={`relative border rounded-2xl p-3 flex flex-col items-center gap-3 ${isDark ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
                     <div className="relative max-h-48 overflow-hidden rounded-xl border border-slate-700/50">
-                      <img src={formImageUrl} alt="憑證照片" className="object-contain max-h-48 rounded-xl" />
+                      <img src={getDirectDriveImageUrl(formImageUrl)} alt="憑證照片" className="object-contain max-h-48 rounded-xl" />
                     </div>
                     <button
                       type="button"
@@ -2613,7 +2639,7 @@ export default function App() {
             </button>
             <div className="relative border border-slate-800 bg-slate-950 p-2 rounded-2xl max-w-full overflow-auto">
               <img 
-                src={selectedFullscreenImage} 
+                src={getDirectDriveImageUrl(selectedFullscreenImage)} 
                 alt="會計申報憑證照片" 
                 className="max-h-[75vh] object-contain rounded-xl shadow-2xl" 
               />
