@@ -393,13 +393,77 @@ app.delete(['/api/records/:id', '/records/:id'], checkOperatorPassword, (req, re
   }
 });
 
+// Helper to extract Google Drive file ID and convert to direct download link
+function getDirectDownloadUrl(url: string): string {
+  if (url.includes('drive.google.com') || url.includes('googleusercontent.com')) {
+    let fileId = '';
+    const idMatch = url.match(/[?&]id=([^&]+)/);
+    if (idMatch && idMatch[1]) {
+      fileId = idMatch[1];
+    } else {
+      const pathMatch = url.match(/\/file\/d\/([^/]+)/);
+      if (pathMatch && pathMatch[1]) {
+        fileId = pathMatch[1];
+      } else {
+        const lh3Match = url.match(/\/d\/([^/]+)/);
+        if (lh3Match && lh3Match[1]) {
+          fileId = lh3Match[1];
+        }
+      }
+    }
+    if (fileId) {
+      return `https://lh3.googleusercontent.com/d/${fileId}`;
+    }
+  }
+  return url;
+}
+
+// Helper to download an image from a URL and convert it to Base64 and MIME type
+async function downloadImageAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {
+  if (url.startsWith('data:')) {
+    const commaIdx = url.indexOf(',');
+    const base64 = url.substring(commaIdx + 1);
+    const mimeTypeMatch = url.match(/data:(.*?);/);
+    const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : 'image/jpeg';
+    return { base64, mimeType };
+  }
+  
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`無法從網址下載圖片 (HTTP ${response.status})`);
+  }
+  
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const base64 = buffer.toString('base64');
+  
+  let mimeType = response.headers.get('content-type') || 'image/jpeg';
+  if (mimeType === 'application/octet-stream') {
+    if (url.includes('.png')) mimeType = 'image/png';
+    else if (url.includes('.webp')) mimeType = 'image/webp';
+    else mimeType = 'image/jpeg';
+  }
+  
+  return { base64, mimeType };
+}
+
 // Gemini OCR Parser Route
 app.post(['/api/ocr', '/ocr'], async (req, res) => {
-  const { base64Image, mimeType, description } = req.body;
+  const { base64Image, mimeType, description, imageUrl } = req.body;
 
   try {
-    const ai = getGeminiClient();
+    let finalBase64 = base64Image;
+    let finalMimeType = mimeType;
 
+    if (imageUrl) {
+      console.log(`[OCR] 正在從網址下載圖片以進行 AI 辨識: ${imageUrl}`);
+      const directUrl = getDirectDownloadUrl(imageUrl);
+      const downloadResult = await downloadImageAsBase64(directUrl);
+      finalBase64 = downloadResult.base64;
+      finalMimeType = downloadResult.mimeType;
+    }
+
+    const ai = getGeminiClient();
     let parts: any[] = [];
 
     // System prompt with accounting rules and constraints
@@ -439,13 +503,15 @@ app.post(['/api/ocr', '/ocr'], async (req, res) => {
      * 換算成台幣後，若金額有小數點，請直接「無條件進位」（取整數，例如 100.1 或 100.9 皆進位為 101），輸出結果中絕對不可出現任何小數點。同時，必須確保：amount_sales + amount_tax = amount_total 的數學一致性。
      * 必須在 notes 欄位開頭或尾端，詳細註明外幣換算資訊，格式如：\`【外幣換算】原幣別: [原始幣別], 原總金額: [原始總金額], 參考匯率: [匯率], 換算為台幣: [換算後總金額] TWD。\`（換算後總金額亦必須為無條件進位後的整數，若使用者有提供額外的說明，應將此段字樣附加在後方）。`;
 
-    if (base64Image && mimeType) {
+    if (finalBase64 && finalMimeType) {
       parts.push({
         inlineData: {
-          mimeType,
-          data: base64Image
+          mimeType: finalMimeType,
+          data: finalBase64
         }
       });
+    } else {
+      throw new Error('未提供任何可進行辨識的圖片資料 (Base64 或圖片網址)');
     }
 
     const userInput = description

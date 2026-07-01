@@ -460,8 +460,13 @@ export default function App() {
     }
   };
 
-  // OCR Service triggering Gemini API proxy
-  const triggerOcrAnalysis = async (base64Img: string, mimeType: string, customInstruction: string | null) => {
+  // OCR Service triggering Gemini API proxy (supports both base64 and image url)
+  const triggerOcrAnalysis = async (
+    base64Img: string | null,
+    mimeType: string | null,
+    customInstruction: string | null,
+    imageUrl?: string | null
+  ) => {
     setOcrLoading(true);
     setOcrSuccessMsg(null);
     try {
@@ -473,7 +478,8 @@ export default function App() {
         body: JSON.stringify({
           base64Image: base64Img,
           mimeType: mimeType,
-          description: customInstruction
+          description: customInstruction,
+          imageUrl: imageUrl || undefined
         })
       });
 
@@ -522,7 +528,12 @@ export default function App() {
         setFormStatus(parsed.status || '免簽核/待查閱');
         setFormApprovedBy(parsed.approved_by || '');
         setFormApprovedAt(parsed.approved_at || '');
-        setFormImageUrl(`data:${mimeType};base64,${base64Img}`); // Retain image for saving
+        
+        if (base64Img && mimeType) {
+          setFormImageUrl(`data:${mimeType};base64,${base64Img}`); // Retain image for saving
+        } else if (imageUrl) {
+          setFormImageUrl(imageUrl); // Retain existing URL
+        }
         
         setOcrSuccessMsg('🎉 AI 雙效視覺辨識成功！請核對後方自動填單，無誤即可儲存入資料庫。');
         
@@ -555,6 +566,26 @@ export default function App() {
       alert(`⚠️ 辨識失敗：${friendlyMsg}`);
     } finally {
       setOcrLoading(false);
+    }
+  };
+
+  // AI Re-OCR handler for existing/uploaded images
+  const handleReOcr = async () => {
+    if (!formImageUrl) {
+      alert('無憑證照片可進行辨識');
+      return;
+    }
+    
+    // Check if it's a base64 string
+    if (formImageUrl.startsWith('data:')) {
+      const commaIdx = formImageUrl.indexOf(',');
+      const actualBase64 = formImageUrl.substring(commaIdx + 1);
+      const mimeTypeMatch = formImageUrl.match(/data:(.*?);/);
+      const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : 'image/jpeg';
+      await triggerOcrAnalysis(actualBase64, mimeType, null, null);
+    } else {
+      // It's a Google Drive or other web URL
+      await triggerOcrAnalysis(null, null, null, formImageUrl);
     }
   };
 
@@ -2180,6 +2211,17 @@ export default function App() {
             {/* Modal Form */}
             <form onSubmit={handleSaveRecord} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
               
+              {/* AI OCR Loading Status */}
+              {ocrLoading && (
+                <div className="bg-cyan-950/40 border border-cyan-900/50 p-3 rounded-2xl flex items-center gap-2.5">
+                  <RefreshCw className="h-4.5 w-4.5 text-cyan-400 shrink-0 animate-spin" />
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-semibold text-cyan-300">AI 正在進行影像 OCR 與會計科目重新分析...</p>
+                    <p className="text-[10px] text-slate-400">這需要數秒鐘，完成後將自動填入下方對應欄位，確認無誤後即可儲存。</p>
+                  </div>
+                </div>
+              )}
+
               {/* Warn if Buyer Tax ID mismatch with Yuanqi Tax ID */}
               {formBuyerTaxId && formBuyerTaxId.trim() !== yuanqiVatId && (
                 <div className="bg-red-950/40 border border-red-900/50 p-3 rounded-2xl flex items-start gap-2.5">
@@ -2546,15 +2588,40 @@ export default function App() {
                     <div className="relative max-h-48 overflow-hidden rounded-xl border border-slate-700/50">
                       <img src={getDirectDriveImageUrl(formImageUrl)} alt="憑證照片" className="object-contain max-h-48 rounded-xl" />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setFormImageUrl(null)}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        isDark ? 'bg-red-955/65 hover:bg-red-900 border border-red-900/60 text-red-200' : 'bg-red-50 hover:bg-red-100 border border-red-200 text-red-700'
-                      }`}
-                    >
-                      🗑️ 移除與更換憑證照片
-                    </button>
+                    <div className="flex gap-2 w-full justify-center">
+                      <button
+                        type="button"
+                        onClick={handleReOcr}
+                        disabled={ocrLoading}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          ocrLoading 
+                            ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-400 border border-slate-700' 
+                            : isDark 
+                              ? 'bg-cyan-955/75 hover:bg-cyan-900 border border-cyan-800 text-cyan-200' 
+                              : 'bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-700'
+                        }`}
+                      >
+                        {ocrLoading ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            AI 正在辨識...
+                          </>
+                        ) : (
+                          <>
+                            🔮 AI 重新辨識照片
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormImageUrl(null)}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          isDark ? 'bg-red-955/65 hover:bg-red-900 border border-red-900/60 text-red-200' : 'bg-red-50 hover:bg-red-100 border border-red-200 text-red-700'
+                        }`}
+                      >
+                        🗑️ 移除照片
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div
