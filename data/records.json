@@ -2,16 +2,16 @@
   {
     "id": "rec-1782404316134-rwut",
     "date": "2026-06-24",
-    "billing_type": "事後報帳",
+    "billing_type": "????",
     "invoice_number": "163515",
-    "status": "免簽核/待查閱",
+    "status": "???/???",
     "approved_by": "",
     "approved_at": "",
-    "seller_name": "이씨커피",
+    "seller_name": "????",
     "seller_tax_id": "303-28-04985",
     "buyer_tax_id": "",
     "summary": "咖啡濾掛包購置",
-    "category": "雜項購置",
+    "category": "????",
     "amount_sales": 376,
     "amount_tax": 38,
     "amount_total": 414,
@@ -19,7 +19,7 @@
     "notes": "【外幣換算】原幣別: KRW, 原總金額: 18000, 參考匯率: 0.023, 換算為台幣: 414 TWD。",
     "createdAt": "2026-06-25T16:18:36.134Z",
     "imageUrl": "https://drive.google.com/uc?export=view&id=1ZH749nFVH_xaDLbDM7by5DoJZkkqnPOE",
-    "recorded_by": "陳玟葶"
+    "recorded_by": "???"
   },
   {
     "id": "rec-1782441460589-tkpo",

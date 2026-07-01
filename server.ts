@@ -145,14 +145,21 @@ function syncToGoogleSheets(action: 'create' | 'update' | 'delete', record: any)
 
 // Middleware to check operator password for editing and deleting
 const checkOperatorPassword = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const clientPassword = req.headers['x-operation-password'];
+  const clientPassword = 
+    req.headers['x-operation-password'] || 
+    req.query.password || 
+    (req.body && req.body.password);
+  
+  const clientPasswordStr = clientPassword ? String(clientPassword).trim() : '';
   const correctPassword = getCleanEnvVar('OPERATOR_PASSWORD');
+  
+  console.log(`[DEBUG checkOperatorPassword] clientPassword: "${clientPasswordStr}", correctPassword: "${correctPassword}"`);
   
   if (!correctPassword) {
     return res.status(500).json({ error: '系統錯誤：後端環境變數 OPERATOR_PASSWORD 尚未設定。' });
   }
   
-  if (clientPassword !== correctPassword) {
+  if (clientPasswordStr !== correctPassword) {
     return res.status(403).json({ error: '安全核對失敗：操作密碼不正確或未提供。' });
   }
   next();

@@ -297,7 +297,7 @@ export default function App() {
     try {
       if (editingRecordId) {
         // Update API
-        const res = await fetch(`/api/records/${editingRecordId}`, {
+        const res = await fetch(`/api/records/${editingRecordId}?password=${encodeURIComponent(operationPassword || '')}`, {
           method: 'PUT',
           headers: { 
             'Content-Type': 'application/json',
@@ -397,7 +397,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`/api/records/${id}`, { 
+      const res = await fetch(`/api/records/${id}?password=${encodeURIComponent(pwd)}`, { 
         method: 'DELETE',
         headers: { 'x-operation-password': pwd }
       });
@@ -571,7 +571,7 @@ export default function App() {
     };
 
     try {
-      const res = await fetch(`/api/records/${record.id}`, {
+      const res = await fetch(`/api/records/${record.id}?password=${encodeURIComponent(pwd)}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -2052,7 +2052,7 @@ export default function App() {
                             };
 
                             try {
-                              const res = await fetch(`/api/records/${selectedRec.id}`, {
+                              const res = await fetch(`/api/records/${selectedRec.id}?password=${encodeURIComponent(pwd)}`, {
                                 method: 'PUT',
                                 headers: { 
                                   'Content-Type': 'application/json',
@@ -2095,7 +2095,7 @@ export default function App() {
                             };
 
                             try {
-                              const res = await fetch(`/api/records/${selectedRec.id}`, {
+                              const res = await fetch(`/api/records/${selectedRec.id}?password=${encodeURIComponent(pwd)}`, {
                                 method: 'PUT',
                                 headers: { 
                                   'Content-Type': 'application/json',
